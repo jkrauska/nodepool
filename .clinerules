@@ -1,0 +1,120 @@
+# Nodepool - Meshtastic Node Pool Management
+
+## Project Overview
+This is a Python CLI tool for managing and monitoring groups of Meshtastic nodes. It uses asyncio for concurrent operations, SQLite for data storage, and provides both CLI and TUI interfaces.
+
+## Development Environment
+- Python 3.13+ required
+- Use `uv` for package management and virtual environments
+- Ruff for linting and formatting
+- pytest with pytest-asyncio for testing
+
+## Project Structure
+```
+nodepool/
+├── src/nodepool/           # Main package
+│   ├── __init__.py
+│   ├── models.py           # Pydantic models
+│   ├── database.py         # Async SQLite operations
+│   ├── node_manager.py     # Meshtastic node operations
+│   ├── config_checker.py   # Configuration validation
+│   ├── cli.py              # Click CLI commands
+│   └── tui.py              # Textual TUI (future)
+├── tests/                  # Test suite
+│   ├── conftest.py         # Shared fixtures
+│   ├── test_database.py
+│   ├── test_node_manager.py
+│   └── test_config_checker.py
+├── pyproject.toml          # Project configuration
+└── .vscode/                # VSCode settings
+```
+
+## Key Technologies
+- **meshtastic**: Python library for Meshtastic communication
+- **click**: CLI framework
+- **rich**: Console output formatting
+- **textual**: TUI framework
+- **fastapi**: REST API (future)
+- **pydantic**: Data validation
+- **aiosqlite**: Async SQLite operations
+
+## Coding Standards
+- Use type hints everywhere (Python 3.13+ syntax: `list[str]` not `List[str]`)
+- Async/await for I/O operations
+- Comprehensive docstrings (Google style)
+- Test coverage goal: 80%+
+
+## Testing Approach
+- Write tests alongside implementation (TDD encouraged)
+- Use pytest-asyncio for async tests
+- Mock Meshtastic serial interfaces
+- Use in-memory SQLite (`:memory:`) for tests
+- Test fixtures in conftest.py
+
+## Database Schema
+- **nodes**: Node inventory with config snapshots
+- **config_snapshots**: Historical configuration data
+- **config_checks**: Validation results
+
+## CLI Commands (to implement)
+- `nodepool discover` - Scan and discover nodes
+- `nodepool list` - Show all nodes
+- `nodepool info <node-id>` - Node details
+- `nodepool check` - Run config validation
+- `nodepool status` - Check reachability
+- `nodepool export` - Export configurations
+- `nodepool tui` - Launch interactive UI
+
+## Configuration Checks
+- TTL/hop limit validation (default: 7)
+- Region settings consistency
+- Secondary channel configuration
+- Firmware version tracking
+- Reachability status
+
+## Async Patterns
+- Use `asyncio.gather()` for concurrent operations
+- Use `loop.run_in_executor()` for blocking serial I/O
+- Context managers for database connections
+- TaskGroup for managing multiple async tasks
+
+## Common Commands
+```bash
+# Setup
+uv venv --python 3.13
+source .venv/bin/activate
+uv pip install -e ".[dev]"
+
+# Development
+ruff check .                 # Lint
+ruff format .                # Format
+pytest                       # Run tests
+pytest --cov=nodepool        # With coverage
+pytest -v                    # Verbose
+
+# Run tool (once implemented)
+nodepool discover
+nodepool list
+nodepool check
+```
+
+## Future Phases
+1. Phase 1 (Current): Read-only operations, CLI commands
+2. Phase 2: Write operations (sync configs, update settings)
+3. Phase 3: REST API with FastAPI
+4. Phase 4: Web dashboard
+
+## Important Notes
+- Serial operations are blocking - always run in executor
+- Use asyncio for concurrent node scanning
+- Database uses upsert pattern (INSERT ... ON CONFLICT)
+- Mock serial interfaces thoroughly in tests
+- Keep reachability checks lightweight
+
+## When Adding New Features
+1. Create models in models.py if needed
+2. Add database operations to database.py
+3. Implement business logic in appropriate manager
+4. Write tests first or alongside implementation
+5. Add CLI command in cli.py
+6. Update this file with new patterns/commands
