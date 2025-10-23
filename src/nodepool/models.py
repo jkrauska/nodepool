@@ -21,6 +21,9 @@ class Node(BaseModel):
     firmware_version: str | None = Field(None, description="Firmware version")
     last_seen: datetime = Field(default_factory=datetime.now, description="Last seen timestamp")
     is_active: bool = Field(True, description="Whether the node is active")
+    managed: bool = Field(True, description="Whether this node is directly managed (vs heard on mesh)")
+    snr: float | None = Field(None, description="Signal-to-noise ratio")
+    hops_away: int | None = Field(None, description="Number of hops away from managed node")
     config: dict[str, Any] = Field(default_factory=dict, description="Node configuration")
 
 
@@ -61,3 +64,19 @@ class NodeStatus(BaseModel):
         default_factory=datetime.now, description="Last reachability check"
     )
     error: str | None = Field(None, description="Error message if not reachable")
+
+
+class HeardHistory(BaseModel):
+    """Represents a historical record of when a node was heard by a managed node."""
+
+    model_config = ConfigDict(
+        json_encoders={datetime: lambda v: v.isoformat()},
+    )
+
+    node_id: str = Field(..., description="Node ID that was heard")
+    seen_by: str = Field(..., description="Managed node ID that heard this node")
+    timestamp: datetime = Field(default_factory=datetime.now, description="When the node was heard")
+    snr: float | None = Field(None, description="Signal-to-noise ratio at time of hearing")
+    hops_away: int | None = Field(None, description="Number of hops away")
+    position_lat: float | None = Field(None, description="GPS latitude if available")
+    position_lon: float | None = Field(None, description="GPS longitude if available")

@@ -7,7 +7,7 @@ from typing import Any
 
 import aiosqlite
 
-from nodepool.models import ConfigCheck, ConfigSnapshot, Node
+from nodepool.models import ConfigCheck, ConfigSnapshot, HeardHistory, Node
 
 
 class AsyncDatabase:
@@ -49,6 +49,9 @@ class AsyncDatabase:
                 firmware_version TEXT,
                 last_seen TEXT NOT NULL,
                 is_active INTEGER NOT NULL DEFAULT 1,
+                managed INTEGER NOT NULL DEFAULT 1,
+                snr REAL,
+                hops_away INTEGER,
                 config TEXT NOT NULL
             );
 
@@ -72,12 +75,52 @@ class AsyncDatabase:
                 FOREIGN KEY (node_id) REFERENCES nodes(id)
             );
 
+            CREATE TABLE IF NOT EXISTS heard_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                node_id TEXT NOT NULL,
+                seen_by TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                snr REAL,
+                hops_away INTEGER,
+                position_lat REAL,
+                position_lon REAL,
+                FOREIGN KEY (node_id) REFERENCES nodes(id),
+                FOREIGN KEY (seen_by) REFERENCES nodes(id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_nodes_active ON nodes(is_active);
+            CREATE INDEX IF NOT EXISTS idx_nodes_managed ON nodes(managed);
             CREATE INDEX IF NOT EXISTS idx_snapshots_node ON config_snapshots(node_id);
             CREATE INDEX IF NOT EXISTS idx_checks_node ON config_checks(node_id);
             CREATE INDEX IF NOT EXISTS idx_checks_timestamp ON config_checks(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_heard_node ON heard_history(node_id);
+            CREATE INDEX IF NOT EXISTS idx_heard_by ON heard_history(seen_by);
+            CREATE INDEX IF NOT EXISTS idx_heard_time ON heard_history(timestamp);
             """
         )
+        await self._conn.commit()
+
+        # Migrate existing nodes table if needed
+        await self._migrate_schema()
+
+    async def _migrate_schema(self) -> None:
+        """Migrate existing database schema to add new columns."""
+        if not self._conn:
+            return
+
+        # Check if managed column exists
+        cursor = await self._conn.execute("PRAGMA table_info(nodes)")
+        columns = await cursor.fetchall()
+        column_names = [col["name"] for col in columns]
+
+        # Add missing columns
+        if "managed" not in column_names:
+            await self._conn.execute("ALTER TABLE nodes ADD COLUMN managed INTEGER NOT NULL DEFAULT 1")
+        if "snr" not in column_names:
+            await self._conn.execute("ALTER TABLE nodes ADD COLUMN snr REAL")
+        if "hops_away" not in column_names:
+            await self._conn.execute("ALTER TABLE nodes ADD COLUMN hops_away INTEGER")
+
         await self._conn.commit()
 
     async def save_node(self, node: Node) -> None:
@@ -93,8 +136,9 @@ class AsyncDatabase:
             """
             INSERT INTO nodes (
                 id, short_name, long_name, serial_port, hw_model,
-                firmware_version, last_seen, is_active, config
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                firmware_version, last_seen, is_active, managed,
+                snr, hops_away, config
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 short_name = excluded.short_name,
                 long_name = excluded.long_name,
@@ -103,6 +147,9 @@ class AsyncDatabase:
                 firmware_version = excluded.firmware_version,
                 last_seen = excluded.last_seen,
                 is_active = excluded.is_active,
+                managed = excluded.managed,
+                snr = excluded.snr,
+                hops_away = excluded.hops_away,
                 config = excluded.config
             """,
             (
@@ -114,6 +161,9 @@ class AsyncDatabase:
                 node.firmware_version,
                 node.last_seen.isoformat(),
                 1 if node.is_active else 0,
+                1 if node.managed else 0,
+                node.snr,
+                node.hops_away,
                 json.dumps(node.config),
             ),
         )
@@ -245,6 +295,70 @@ class AsyncDatabase:
         rows = await cursor.fetchall()
         return [self._row_to_check(row) for row in rows]
 
+    async def save_heard_history(self, history: HeardHistory) -> None:
+        """Save a heard history entry.
+
+        Args:
+            history: HeardHistory object to save
+        """
+        if not self._conn:
+            await self.connect()
+
+        await self._conn.execute(
+            """
+            INSERT INTO heard_history (
+                node_id, seen_by, timestamp, snr, hops_away,
+                position_lat, position_lon
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                history.node_id,
+                history.seen_by,
+                history.timestamp.isoformat(),
+                history.snr,
+                history.hops_away,
+                history.position_lat,
+                history.position_lon,
+            ),
+        )
+        await self._conn.commit()
+
+    async def get_heard_nodes(
+        self, 
+        seen_by: str | None = None,
+        managed_only: bool = False,
+    ) -> list[Node]:
+        """Get nodes that have been heard on the mesh.
+
+        Args:
+            seen_by: Optional filter by which managed node heard them
+            managed_only: If True, only return nodes marked as not managed
+
+        Returns:
+            List of Node objects
+        """
+        if not self._conn:
+            await self.connect()
+
+        query = "SELECT * FROM nodes WHERE managed = 0"
+        params = []
+
+        if seen_by:
+            # Add filter based on heard_history
+            query = """
+                SELECT DISTINCT n.* FROM nodes n
+                JOIN heard_history h ON n.id = h.node_id
+                WHERE n.managed = 0 AND h.seen_by = ?
+            """
+            params.append(seen_by)
+
+        query += " ORDER BY last_seen DESC"
+        
+        cursor = await self._conn.execute(query, params)
+        rows = await cursor.fetchall()
+
+        return [self._row_to_node(row) for row in rows]
+
     def _row_to_node(self, row: aiosqlite.Row) -> Node:
         """Convert database row to Node object.
 
@@ -254,6 +368,11 @@ class AsyncDatabase:
         Returns:
             Node object
         """
+        # Handle both old and new schema
+        managed = bool(row.get("managed", 1))  # Default to managed=True for old records
+        snr = row.get("snr")
+        hops_away = row.get("hops_away")
+        
         return Node(
             id=row["id"],
             short_name=row["short_name"],
@@ -263,6 +382,9 @@ class AsyncDatabase:
             firmware_version=row["firmware_version"],
             last_seen=datetime.fromisoformat(row["last_seen"]),
             is_active=bool(row["is_active"]),
+            managed=managed,
+            snr=snr,
+            hops_away=hops_away,
             config=json.loads(row["config"]),
         )
 
