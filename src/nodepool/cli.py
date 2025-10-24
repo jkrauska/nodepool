@@ -457,7 +457,7 @@ def info(node_id: str, db: str):
                     console.print(f"    Admin Keys: {len(admin_keys)} set")
                     for i, key in enumerate(admin_keys):
                         slot = admin_keys_set[i] if i < len(admin_keys_set) else i
-                        console.print(f"      [{slot}] {key[:16]}... ({len(key)//2} bytes)")
+                        console.print(f"      [{slot}] {key}")
                 else:
                     console.print("    Admin Keys: None set")
                 
