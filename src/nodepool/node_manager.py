@@ -1655,21 +1655,17 @@ class NodeManager:
                                 print(f"[{idx}/{total_sections}] Requesting {section_name} config... (attempt {attempt})", end="", flush=True)
                                 
                                 # Time the request
-                                import io
-                                import sys
                                 start_time = time.time()
                                 
-                                # Suppress library's verbose output
-                                old_stdout = sys.stdout
-                                sys.stdout = io.StringIO()
-                                
-                                try:
-                                    remote_node.requestConfig(section_field)
-                                    interface.waitForAckNak()
-                                finally:
-                                    sys.stdout = old_stdout
+                                # DON'T suppress output - we need to see what's happening
+                                remote_node.requestConfig(section_field)
+                                interface.waitForAckNak()
                                 
                                 elapsed = time.time() - start_time
+                                
+                                # Debug: Check what's in responses dict
+                                logger.info(f"After {section_name} request - responses['config'] keys: {list(responses.get('config', {}).keys())}")
+                                logger.info(f"After {section_name} request - responses['module_config'] keys: {list(responses.get('module_config', {}).keys())}")
                                 
                                 # Check if we captured the response
                                 captured = (section_name in responses.get("config", {}) or 
@@ -1683,6 +1679,7 @@ class NodeManager:
                                 else:
                                     # Request completed but no data captured
                                     print(f"\r[{idx}/{total_sections}] {section_name} config - no data ({elapsed:.1f}s)")
+                                    logger.warning(f"Response dict after {section_name}: {responses}")
                                     if attempt < 3:
                                         continue
                                     
@@ -1700,6 +1697,11 @@ class NodeManager:
                         
                         if not section_success:
                             failed_sections.append(section_name)
+                            
+                            # Early exit: If first section fails, abort remaining
+                            if idx == 1:
+                                print(f"\n  First config section failed after {attempt} attempts - aborting remaining sections")
+                                break
                     
                     # Summary
                     print(f"\n  Retrieved {successful_sections}/{total_sections} config sections")
