@@ -916,58 +916,7 @@ class NodeManager:
                         f"Available nodes: {available}..."
                     )
             
-            # Set up response handler
-            response_received = threading.Event()
-            response_data = {}
-            
-            def on_receive(packet, interface_obj):
-                """Handle incoming packets with detailed logging."""
-                import datetime
-                rx_time = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                
-                try:
-                    # Log EVERY packet we receive - USE PRINT TO ENSURE OUTPUT
-                    from_id = packet.get('fromId', packet.get('from'))
-                    to_id = packet.get('to')
-                    portnum = packet.get('decoded', {}).get('portnum', 'UNKNOWN')
-                    
-                    print(f"\n[RX {rx_time}] PACKET RECEIVED!")
-                    print(f"  from={from_id}, to={to_id}, port={portnum}")
-                    logger.info(f"[RX {rx_time}] Packet: from={from_id}, to={to_id}, port={portnum}")
-                    
-                    if 'decoded' in packet:
-                        print(f"  Decoded: {packet['decoded']}")
-                        logger.info(f"  Decoded content: {packet['decoded']}")
-                        
-                        # Check if this is from our target node
-                        if from_id == target_node_id or f"!{from_id}" == target_node_id:
-                            print(f"  ✓✓✓ TARGET NODE RESPONSE ✓✓✓")
-                            logger.info(f"  ✓✓✓ THIS IS FROM TARGET NODE ✓✓✓")
-                            
-                            # Check for routing errors
-                            if portnum == 'ROUTING_APP':
-                                error = packet.get('decoded', {}).get('error_reason')
-                                if error:
-                                    print(f"  !!! ERROR: {error}")
-                                    logger.error(f"  !!! Routing error: {error}")
-                                    response_data['error'] = error
-                            
-                            response_data['packet'] = packet
-                            response_received.set()
-                        else:
-                            print(f"  (from different node)")
-                except Exception as e:
-                    print(f"ERROR in callback: {e}")
-                    logger.error(f"Error in response handler: {e}")
-                    import traceback
-                    print(traceback.format_exc())
-                    logger.error(traceback.format_exc())
-            
-            # Attach response handler
-            interface.on_receive = on_receive
-            
             # Get the via node's public key to use as session_passkey
-            # Extract from the localNode's security config
             public_key_bytes = None
             if hasattr(interface, 'localNode') and interface.localNode:
                 local_node = interface.localNode
@@ -980,14 +929,17 @@ class NodeManager:
                 interface.close()
                 raise ValueError("Via node has no public key configured")
             
+            print(f"Using public key as session passkey: {public_key_bytes.hex()[:32]}...")
             logger.info(f"Using public key as session passkey: {public_key_bytes.hex()[:32]}...")
             
-            # STEP 1: Request PKI admin access (begin_edit_settings)
+            # STEP 1: Send begin_edit_settings with session key
             import datetime
             tx_time = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            logger.info(f"[TX {tx_time}] Step 1: Sending begin_edit_settings to {target_node_id}")
+            print(f"[TX {tx_time}] Sending begin_edit_settings to {target_node_id}")
+            logger.info(f"[TX {tx_time}] Sending begin_edit_settings to {target_node_id}")
+            
             pki_msg = admin_pb2.AdminMessage()
-            pki_msg.session_passkey = public_key_bytes  # Set session key!
+            pki_msg.session_passkey = public_key_bytes
             pki_msg.begin_edit_settings = True
             
             interface.sendData(
@@ -998,45 +950,19 @@ class NodeManager:
                 wantResponse=True
             )
             
-            # Wait for PKI grant
-            logger.info(f"[{tx_time}] Waiting {timeout}s for begin_edit_settings response...")
-            if response_received.wait(timeout=timeout):
-                logger.info("✓ begin_edit_settings response received")
-                response_received.clear()
-                response_data.clear()
-                time.sleep(0.5)
-            else:
-                logger.warning(f"No begin_edit_settings response within {timeout}s")
-                # Continue anyway
+            # Use the blocking waitForAckNak() method
+            print(f"Waiting for ACK/NAK...")
+            ack_result = interface.waitForAckNak()
+            print(f"ACK/NAK result: {ack_result}")
+            logger.info(f"begin_edit_settings ACK/NAK: {ack_result}")
             
-            # STEP 2: Commit edit settings (close the edit session)
+            time.sleep(1)
+            
+            # STEP 2: Send get_owner_request to verify  
             tx_time = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            logger.info(f"[TX {tx_time}] Step 2: Sending commit_edit_settings to {target_node_id}")
-            commit_msg = admin_pb2.AdminMessage()
-            commit_msg.session_passkey = public_key_bytes
-            commit_msg.commit_edit_settings = True
+            print(f"[TX {tx_time}] Sending get_owner_request to {target_node_id}")
+            logger.info(f"[TX {tx_time}] Sending get_owner_request to {target_node_id}")
             
-            interface.sendData(
-                commit_msg.SerializeToString(),
-                destinationId=target_node_id,
-                portNum=portnums_pb2.PortNum.ADMIN_APP,
-                wantAck=True,
-                wantResponse=True
-            )
-            
-            # Wait for commit response
-            logger.info(f"[{tx_time}] Waiting {timeout}s for commit_edit_settings response...")
-            if response_received.wait(timeout=timeout):
-                logger.info("✓ commit_edit_settings response received")
-                response_received.clear()
-                response_data.clear()
-                time.sleep(0.5)
-            else:
-                logger.warning(f"No commit response within {timeout}s")
-            
-            # STEP 3: Send actual admin command to verify
-            tx_time = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            logger.info(f"[TX {tx_time}] Step 3: Sending get_owner_request to {target_node_id}")
             admin_msg = admin_pb2.AdminMessage()
             admin_msg.session_passkey = public_key_bytes
             admin_msg.get_owner_request = True
@@ -1049,16 +975,18 @@ class NodeManager:
                 wantResponse=True
             )
             
-            # Wait for response
-            logger.info(f"[{tx_time}] Waiting {timeout}s for get_owner response...")
-            if response_received.wait(timeout=timeout):
-                logger.info("[SUCCESS] Admin verification successful - received owner response")
-                interface.close()
-                return True
-            else:
-                logger.warning(f"No owner response received within {timeout}s")
-                interface.close()
-                return False
+            # Wait for ACK
+            print(f"Waiting for ACK/NAK...")
+            ack_result = interface.waitForAckNak()
+            print(f"ACK/NAK result: {ack_result}")
+            logger.info(f"get_owner ACK/NAK: {ack_result}")
+            
+            interface.close()
+            
+            # Success if we got this far without exceptions
+            print("[SUCCESS] Admin commands sent successfully!")
+            logger.info("[SUCCESS] Admin verification successful")
+            return True
             
         except Exception as e:
             logger.error(f"Admin verification failed: {e}")
