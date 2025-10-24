@@ -950,46 +950,50 @@ class NodeManager:
             config[section_name] = section_dict
         
         # Process ModuleConfig sections
+        print(f"\n[BUILD_CONFIG] Processing {len(responses.get('module_config', {}))} module config sections")
+        print(f"[BUILD_CONFIG] Module config keys: {list(responses.get('module_config', {}).keys())}")
+        
         for section_name, section_data in responses.get("module_config", {}).items():
+            print(f"[BUILD_CONFIG] Converting {section_name} module config to dict")
+            
             # Convert protobuf message to dict (handles nested objects)
-            print(f"\n[BUILD_CONFIG] Converting {section_name} protobuf to dict...")
-            print(f"  Protobuf type: {type(section_data)}")
-            print(f"  Protobuf str(): {str(section_data)[:200]}")
-            
-            # Check each field's actual value
-            print(f"  Field values:")
-            for field in section_data.DESCRIPTOR.fields:
-                val = getattr(section_data, field.name, None)
-                print(f"    {field.name}: {val} (type: {type(val).__name__})")
-            
+            # Use including_default_value_fields=True to get all fields, even with defaults
             section_dict = MessageToDict(
                 section_data,
-                preserving_proto_field_name=True
+                preserving_proto_field_name=True,
+                including_default_value_fields=True  # Include fields with default values!
             )
             
-            print(f"  MessageToDict result: {section_dict}")
+            print(f"[BUILD_CONFIG] {section_name} MessageToDict result has {len(section_dict)} keys: {list(section_dict.keys())}")
             
-            # If MessageToDict returns empty, manually extract non-default fields
+            # If still empty, manually extract all fields
             if not section_dict:
-                print(f"  MessageToDict returned empty! Manually extracting fields...")
+                print(f"[BUILD_CONFIG] MessageToDict returned empty for {section_name}, manually extracting")
                 section_dict = {}
                 for field in section_data.DESCRIPTOR.fields:
                     val = getattr(section_data, field.name)
-                    # Skip default/empty values
-                    if val not in (None, "", 0, False, b'', []):
+                    # Include all non-None values
+                    if val is not None:
                         if hasattr(val, 'DESCRIPTOR'):  # Nested message
-                            nested_dict = MessageToDict(val, preserving_proto_field_name=True)
-                            if nested_dict:  # Only include if not empty
-                                section_dict[field.name] = nested_dict
+                            nested_dict = MessageToDict(
+                                val, 
+                                preserving_proto_field_name=True,
+                                including_default_value_fields=True
+                            )
+                            section_dict[field.name] = nested_dict
                         else:
                             section_dict[field.name] = val
-                print(f"  Manual extraction result: {section_dict}")
+                print(f"[BUILD_CONFIG] {section_name} manual extraction result has {len(section_dict)} keys")
             
             # Add metadata
             section_dict["_status"] = "loaded"
             section_dict["_retrieved_at"] = current_time
             
+            print(f"[BUILD_CONFIG] Adding {section_name} to config dict")
             config[section_name] = section_dict
+        
+        print(f"[BUILD_CONFIG] Final config has {len(config)} total sections")
+        print(f"[BUILD_CONFIG] Config keys: {list(config.keys())}")
         
         return config
 
