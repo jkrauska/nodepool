@@ -926,36 +926,41 @@ class NodeManager:
                 rx_time = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
                 
                 try:
-                    # Log EVERY packet we receive
+                    # Log EVERY packet we receive - USE PRINT TO ENSURE OUTPUT
                     from_id = packet.get('fromId', packet.get('from'))
                     to_id = packet.get('to')
                     portnum = packet.get('decoded', {}).get('portnum', 'UNKNOWN')
                     
+                    print(f"\n[RX {rx_time}] PACKET RECEIVED!")
+                    print(f"  from={from_id}, to={to_id}, port={portnum}")
                     logger.info(f"[RX {rx_time}] Packet: from={from_id}, to={to_id}, port={portnum}")
-                    logger.info(f"  Full packet: {packet}")
                     
                     if 'decoded' in packet:
-                        # Listen for ALL ports to see what we're getting
+                        print(f"  Decoded: {packet['decoded']}")
                         logger.info(f"  Decoded content: {packet['decoded']}")
                         
                         # Check if this is from our target node
                         if from_id == target_node_id or f"!{from_id}" == target_node_id:
+                            print(f"  ✓✓✓ TARGET NODE RESPONSE ✓✓✓")
                             logger.info(f"  ✓✓✓ THIS IS FROM TARGET NODE ✓✓✓")
                             
                             # Check for routing errors
                             if portnum == 'ROUTING_APP':
                                 error = packet.get('decoded', {}).get('error_reason')
                                 if error:
+                                    print(f"  !!! ERROR: {error}")
                                     logger.error(f"  !!! Routing error: {error}")
                                     response_data['error'] = error
                             
                             response_data['packet'] = packet
                             response_received.set()
                         else:
-                            logger.debug(f"  (not from target {target_node_id})")
+                            print(f"  (from different node)")
                 except Exception as e:
+                    print(f"ERROR in callback: {e}")
                     logger.error(f"Error in response handler: {e}")
                     import traceback
+                    print(traceback.format_exc())
                     logger.error(traceback.format_exc())
             
             # Attach response handler
