@@ -1620,8 +1620,7 @@ class NodeManager:
                     
                     remote_node.onResponseRequestSettings = wrapped_settings_callback
                     
-                    # Request all LocalConfig sections
-                    print(f"  Requesting local config sections...")
+                    # Prepare all config sections to request
                     config_sections = [
                         ("device", config_pb2.Config.DESCRIPTOR.fields_by_name["device"]),
                         ("position", config_pb2.Config.DESCRIPTOR.fields_by_name["position"]),
@@ -1632,29 +1631,80 @@ class NodeManager:
                         ("bluetooth", config_pb2.Config.DESCRIPTOR.fields_by_name["bluetooth"]),
                     ]
                     
-                    for section_name, section_field in config_sections:
-                        try:
-                            print(f"    - {section_name}")
-                            remote_node.requestConfig(section_field)
-                            interface.waitForAckNak()
-                        except Exception as e:
-                            logger.warning(f"Failed to get {section_name} config: {e}")
-                    
-                    # Request all ModuleConfig sections  
-                    print(f"  Requesting module config sections...")
                     module_sections = [
                         ("mqtt", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["mqtt"]),
                         ("serial", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["serial"]),
                         ("telemetry", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["telemetry"]),
                     ]
                     
-                    for section_name, section_field in module_sections:
-                        try:
-                            print(f"    - {section_name}")
-                            remote_node.requestConfig(section_field)
-                            interface.waitForAckNak()
-                        except Exception as e:
-                            logger.warning(f"Failed to get {section_name} module config: {e}")
+                    # Combine all sections for progress tracking
+                    all_sections = config_sections + module_sections
+                    total_sections = len(all_sections)
+                    successful_sections = 0
+                    failed_sections = []
+                    
+                    print(f"\n  Retrieving {total_sections} config sections...")
+                    
+                    # Request each section with retry logic
+                    for idx, (section_name, section_field) in enumerate(all_sections, 1):
+                        section_success = False
+                        
+                        for attempt in range(1, 4):  # Attempts 1, 2, 3
+                            try:
+                                # Show request with attempt number
+                                print(f"[{idx}/{total_sections}] Requesting {section_name} config... (attempt {attempt})", end="", flush=True)
+                                
+                                # Time the request
+                                import io
+                                import sys
+                                start_time = time.time()
+                                
+                                # Suppress library's verbose output
+                                old_stdout = sys.stdout
+                                sys.stdout = io.StringIO()
+                                
+                                try:
+                                    remote_node.requestConfig(section_field)
+                                    interface.waitForAckNak()
+                                finally:
+                                    sys.stdout = old_stdout
+                                
+                                elapsed = time.time() - start_time
+                                
+                                # Check if we captured the response
+                                captured = (section_name in responses.get("config", {}) or 
+                                          section_name in responses.get("module_config", {}))
+                                
+                                if captured:
+                                    print(f"\r[{idx}/{total_sections}] Received {section_name} config ✓ ({elapsed:.1f}s)")
+                                    section_success = True
+                                    successful_sections += 1
+                                    break
+                                else:
+                                    # Request completed but no data captured
+                                    print(f"\r[{idx}/{total_sections}] {section_name} config - no data ({elapsed:.1f}s)")
+                                    if attempt < 3:
+                                        continue
+                                    
+                            except Exception as e:
+                                elapsed = time.time() - start_time
+                                error_msg = str(e)
+                                if "Timed out" in error_msg or "timeout" in error_msg.lower():
+                                    print(f"\r[{idx}/{total_sections}] {section_name} config - timeout ({elapsed:.1f}s)")
+                                else:
+                                    print(f"\r[{idx}/{total_sections}] {section_name} config - error ({elapsed:.1f}s)")
+                                
+                                if attempt < 3:
+                                    print(f"[{idx}/{total_sections}] Retrying {section_name} config (attempt {attempt + 1})")
+                                    time.sleep(1)  # Brief delay before retry
+                        
+                        if not section_success:
+                            failed_sections.append(section_name)
+                    
+                    # Summary
+                    print(f"\n  Retrieved {successful_sections}/{total_sections} config sections")
+                    if failed_sections:
+                        print(f"  Failed: {', '.join(failed_sections)}")
                     
                     # Get firmware from captured response
                     firmware_version = responses["firmware_version"]
