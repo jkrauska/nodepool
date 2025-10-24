@@ -241,11 +241,11 @@ def discover(db: str, ports: tuple[str, ...], verbose: bool, network: bool):
                             f"({node.hw_model})"
                         )
                     except Exception as e:
-                        if verbose:
-                            error_msg = str(e)
-                            if len(error_msg) > 50:
-                                error_msg = error_msg[:47] + "..."
-                            console.print(f"  [dim]✗ {connection_string} → {error_msg}[/dim]")
+                        # Always show connection failures for mDNS discoveries
+                        error_msg = str(e)
+                        if len(error_msg) > 50:
+                            error_msg = error_msg[:47] + "..."
+                        console.print(f"  [red]✗[/red] {connection_string} → {error_msg}")
 
         if not nodes:
             console.print("\n[yellow]No nodes discovered.[/yellow]")
