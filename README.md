@@ -252,6 +252,102 @@ nodepool export -o nodes.json
 nodepool export -o nodes.yaml --format yaml
 ```
 
+### `nodepool connect`
+
+Connect to a node via serial port or TCP and save to database.
+
+```bash
+nodepool connect CONNECTION [OPTIONS]
+
+Options:
+  --db PATH    Database file path
+```
+
+**Connection String Formats:**
+- Serial: `/dev/cu.usbmodem123` or `COM3`
+- TCP: `tcp://192.168.1.100:4403`
+
+Examples:
+```bash
+# Connect via serial
+nodepool connect /dev/cu.usbmodem83201
+
+# Connect via TCP
+nodepool connect tcp://192.168.1.100:4403
+```
+
+### Remote Node Operations
+
+**⚠️ WORK IN PROGRESS** - Remote node operations over mesh
+
+These commands allow interaction with remote nodes through a locally-connected "via" node.
+
+#### `nodepool pki-test`
+
+Test PKI-authenticated message delivery to a remote node.
+
+```bash
+nodepool pki-test TARGET --via CONNECTION [OPTIONS]
+
+Options:
+  --via TEXT          Connection to use (serial port or tcp://)
+  --message TEXT      Message to send (default: "PKI test")
+  --timeout INTEGER   Timeout in seconds (default: 30)
+```
+
+Example:
+```bash
+nodepool pki-test !29f35f73 --via /dev/cu.usbmodem83201
+```
+
+#### `nodepool remote verify`
+
+Verify PKI admin access to a remote node.
+
+```bash
+nodepool remote verify TARGET --via CONNECTION [OPTIONS]
+
+Options:
+  --via TEXT          Connection to use (serial port or tcp://)
+  --timeout INTEGER   Timeout in seconds (default: 30)
+```
+
+Example:
+```bash
+nodepool remote verify !29f35f73 --via /dev/cu.usbmodem83201
+```
+
+#### `nodepool remote config`
+
+Retrieve configuration from a remote node (metadata and firmware version).
+
+```bash
+nodepool remote config TARGET --via VIA_NODE [OPTIONS]
+
+Options:
+  --via TEXT          Via node ID to route through
+  --timeout INTEGER   Timeout in seconds (default: 30)
+  --db PATH           Database file path
+```
+
+**Status:** ✅ Firmware version retrieval working!
+
+Example:
+```bash
+# Get remote node config via another node
+nodepool remote config !29f35f73 --via !3c7f9d4e
+
+# View retrieved info
+nodepool info !29f35f73
+```
+
+**Note:** Full configuration retrieval is in progress. Currently retrieves:
+- ✅ Firmware version
+- ✅ Hardware model
+- ⚠️ Full config sections (device, lora, mqtt, etc.) - work in progress
+
+See `TODO-remote-config-RX.md` for implementation status.
+
 ## Configuration Checks
 
 The tool validates:
