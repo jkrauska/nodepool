@@ -96,10 +96,30 @@ def discover(db: str, ports: tuple[str, ...], verbose: bool):
                     error_msg = "No response"
                 console.print(f"  [dim]✗ {port} → {error_msg}[/dim]")
 
+        # Track which port each node was found on
+        port_map = {}
+        
+        def progress_callback_with_tracking(port: str, result: Node | Exception):
+            """Handle progress updates and track successful port-node mappings."""
+            if isinstance(result, Node):
+                port_map[result.id] = port
+                discovered.append(result)
+                console.print(
+                    f"  [green]✓[/green] {port} → [bold]{result.short_name}[/bold] "
+                    f"({result.hw_model})"
+                )
+            elif verbose:
+                # Only show failures in verbose mode
+                error_msg = str(result)
+                # Shorten common error messages
+                if "No node info" in error_msg or "Connection" in error_msg:
+                    error_msg = "No response"
+                console.print(f"  [dim]✗ {port} → {error_msg}[/dim]")
+
         # Discover nodes with progress callback
         nodes = await manager.discover_nodes(
             serial_ports=port_list,
-            progress_callback=progress_callback
+            progress_callback=progress_callback_with_tracking
         )
 
         if not nodes:
@@ -112,69 +132,20 @@ def discover(db: str, ports: tuple[str, ...], verbose: bool):
 
         console.print(f"\n[green]Found {len(nodes)} node(s)![/green]")
 
-        # Save to database and import heard nodes
+        # Save to database with connections
         console.print("\nSaving to database...")
         async with AsyncDatabase(db) as database:
             await database.initialize()
 
-            total_heard = 0
-            total_new = 0
-            total_updated = 0
-
             for node in nodes:
+                # Save node data
                 await database.save_node(node)
+                # Save connection using the tracked port (this makes it "managed")
+                if node.id in port_map:
+                    await database.save_connection(node.id, port_map[node.id])
 
-                # Import heard nodes from each discovered managed node
-                if node.serial_port:
-                    console.print(f"Importing heard nodes from {node.short_name}...")
-                    try:
-                        heard_nodes, heard_history = await manager.import_heard_nodes(
-                            node.serial_port, node.id
-                        )
-
-                        # Track new vs updated nodes
-                        new_nodes = []
-                        updated_nodes = []
-
-                        # Check which nodes are new
-                        for heard_node in heard_nodes:
-                            existing = await database.get_node(heard_node.id)
-                            if existing is None:
-                                new_nodes.append(heard_node)
-                            else:
-                                updated_nodes.append(heard_node)
-
-                            # Save the node (insert or update)
-                            await database.save_node(heard_node)
-
-                        # Save heard history
-                        for history in heard_history:
-                            await database.save_heard_history(history)
-
-                        total_heard += len(heard_nodes)
-                        total_new += len(new_nodes)
-                        total_updated += len(updated_nodes)
-
-                        # Display results for this managed node
-                        console.print(f"  [green]✓[/green] Imported {len(heard_nodes)} heard node(s)")
-                        if new_nodes:
-                            new_names = ", ".join(n.short_name for n in new_nodes[:5])
-                            if len(new_nodes) > 5:
-                                new_names += f", ... (+{len(new_nodes) - 5} more)"
-                            console.print(f"    - {len(new_nodes)} new: {new_names}")
-                        if updated_nodes:
-                            console.print(f"    - {len(updated_nodes)} updated")
-
-                    except Exception as e:
-                        console.print(f"  [yellow]Warning: Could not import heard nodes: {e}[/yellow]")
-
-        console.print(f"[green]Successfully saved {len(nodes)} managed node(s) to database.[/green]")
-        if total_heard > 0:
-            console.print(f"[green]Imported {total_heard} heard node(s) from the mesh.[/green]")
-            if total_new > 0:
-                console.print(f"  [cyan]→ {total_new} new node(s)[/cyan]")
-            if total_updated > 0:
-                console.print(f"  [dim]→ {total_updated} updated node(s)[/dim]")
+        console.print(f"[green]Successfully discovered and saved {len(nodes)} connected node(s).[/green]")
+        console.print("[dim]Run [bold]nodepool sync[/bold] to import heard nodes from the mesh.[/dim]")
 
     run_async(_discover())
 
@@ -193,16 +164,16 @@ def discover(db: str, ports: tuple[str, ...], verbose: bool):
     help="Show inactive nodes as well",
 )
 @click.option(
-    "--managed-only",
+    "--connected-only",
     is_flag=True,
-    help="Show only managed nodes (default)",
+    help="Show only connected nodes (default)",
 )
 @click.option(
     "--heard-only",
     is_flag=True,
     help="Show only heard nodes (from mesh)",
 )
-def list(db: str, show_all: bool, managed_only: bool, heard_only: bool):
+def list(db: str, show_all: bool, connected_only: bool, heard_only: bool):
     """List all nodes in the pool."""
     async def _list():
         async with AsyncDatabase(db) as database:
@@ -211,14 +182,20 @@ def list(db: str, show_all: bool, managed_only: bool, heard_only: bool):
             # Get nodes based on filter
             if heard_only:
                 nodes = await database.get_heard_nodes()
+                node_ports = {}  # Heard nodes have no ports
+            elif connected_only or (not heard_only):
+                # Default: show only connected nodes
+                connected = await database.get_connected_nodes()
+                nodes = [n for n, _ in connected]
+                node_ports = {n.id: p for n, p in connected}
             else:
                 nodes = await database.get_all_nodes(active_only=not show_all)
-                # Filter by managed status if requested
-                if not heard_only and managed_only:
-                    nodes = [n for n in nodes if n.managed]
-                elif not managed_only and not heard_only:
-                    # Default: show only managed nodes
-                    nodes = [n for n in nodes if n.managed]
+                # Build port map for all nodes
+                node_ports = {}
+                for node in nodes:
+                    port = await database.get_connection(node.id)
+                    if port:
+                        node_ports[node.id] = port
 
         if not nodes:
             console.print("[yellow]No nodes found in database.[/yellow]")
@@ -228,8 +205,8 @@ def list(db: str, show_all: bool, managed_only: bool, heard_only: bool):
         # Determine table title
         if heard_only:
             title = "Heard Nodes (from Mesh)"
-        elif managed_only or (not heard_only and not show_all):
-            title = "Managed Nodes"
+        elif connected_only or (not heard_only and not show_all):
+            title = "Connected Nodes"
         else:
             title = "All Nodes"
 
@@ -267,13 +244,14 @@ def list(db: str, show_all: bool, managed_only: bool, heard_only: bool):
                     f"[{status_style}]{status}[/{status_style}]",
                 )
             else:
-                # Show serial port for managed nodes
+                # Show serial port for connected nodes
+                serial_port = node_ports.get(node.id, "Not connected")
                 table.add_row(
                     node.short_name,
                     node.id,
                     node.hw_model or "Unknown",
                     node.firmware_version or "Unknown",
-                    node.serial_port or "Not set",
+                    serial_port,
                     f"[{status_style}]{status}[/{status_style}]",
                 )
 
@@ -297,10 +275,12 @@ def info(node_id: str, db: str):
         async with AsyncDatabase(db) as database:
             await database.initialize()
             node = await database.get_node(node_id)
-
-        if not node:
-            console.print(f"[red]Node {node_id} not found in database.[/red]")
-            return
+            
+            if not node:
+                console.print(f"[red]Node {node_id} not found in database.[/red]")
+                return
+            
+            serial_port = await database.get_connection(node_id)
 
         console.print(f"\n[bold cyan]Node Information: {node.short_name}[/bold cyan]")
         console.print(f"[dim]{'=' * 60}[/dim]")
@@ -311,7 +291,7 @@ def info(node_id: str, db: str):
         console.print(f"  Long Name: {node.long_name}")
         console.print(f"  Hardware: {node.hw_model or 'Unknown'}")
         console.print(f"  Firmware: {node.firmware_version or 'Unknown'}")
-        console.print(f"  Serial Port: {node.serial_port or 'Not set'}")
+        console.print(f"  Serial Port: {serial_port or 'Not connected'}")
         console.print(f"  Last Seen: {node.last_seen}")
         console.print(f"  Status: {'Active' if node.is_active else 'Inactive'}")
 
@@ -424,21 +404,26 @@ def check(db: str, ttl: int, region: str | None):
     type=click.Path(),
 )
 def status(db: str):
-    """Check reachability status of all nodes."""
+    """Check reachability status of connected nodes."""
     async def _status():
         async with AsyncDatabase(db) as database:
             await database.initialize()
-            nodes = await database.get_all_nodes()
+            connected_nodes = await database.get_connected_nodes()
 
-        if not nodes:
-            console.print("[yellow]No nodes found in database.[/yellow]")
+        if not connected_nodes:
+            console.print("[yellow]No connected nodes found.[/yellow]")
+            console.print("Run [bold]nodepool discover[/bold] first.")
             return
 
-        console.print(f"[bold blue]Checking status of {len(nodes)} node(s)...[/bold blue]\n")
+        console.print(f"[bold blue]Checking status of {len(connected_nodes)} connected node(s)...[/bold blue]\n")
 
         manager = NodeManager()
+        statuses = []
+        
         with console.status("[bold green]Checking node reachability..."):
-            statuses = await manager.check_all_reachability(nodes)
+            for node, serial_port in connected_nodes:
+                status = await manager.check_node_reachability(node, serial_port)
+                statuses.append((status, serial_port))
 
         table = Table(title="Node Status")
         table.add_column("Node", style="cyan", no_wrap=True)
@@ -446,20 +431,20 @@ def status(db: str):
         table.add_column("Status", style="white")
         table.add_column("Error", style="red")
 
-        for status in statuses:
+        for status, serial_port in statuses:
             reachable_text = "✓ Reachable" if status.reachable else "✗ Unreachable"
             reachable_style = "green" if status.reachable else "red"
 
             table.add_row(
                 f"{status.node.short_name} ({status.node.id})",
-                status.node.serial_port or "Not set",
+                serial_port,
                 f"[{reachable_style}]{reachable_text}[/{reachable_style}]",
                 status.error or "",
             )
 
         console.print(table)
 
-        reachable_count = sum(1 for s in statuses if s.reachable)
+        reachable_count = sum(1 for s, _ in statuses if s.reachable)
         console.print(f"\n{reachable_count}/{len(statuses)} node(s) reachable")
 
     run_async(_status())
@@ -482,34 +467,33 @@ def sync(db: str, port: str | None):
         async with AsyncDatabase(db) as database:
             await database.initialize()
 
-            # Get managed nodes
-            all_nodes = await database.get_all_nodes(active_only=True)
-            managed_nodes = [n for n in all_nodes if n.managed and n.serial_port]
+            # Get connected nodes (managed via connections table)
+            connected_nodes = await database.get_connected_nodes()
 
-            if not managed_nodes:
-                console.print("[yellow]No managed nodes with serial ports found.[/yellow]")
+            if not connected_nodes:
+                console.print("[yellow]No connected nodes found.[/yellow]")
                 console.print("Run [bold]nodepool discover[/bold] first.")
                 return
 
             # Filter by port if specified
             if port:
-                managed_nodes = [n for n in managed_nodes if n.serial_port == port]
-                if not managed_nodes:
-                    console.print(f"[red]No managed node found on port {port}[/red]")
+                connected_nodes = [(n, p) for n, p in connected_nodes if p == port]
+                if not connected_nodes:
+                    console.print(f"[red]No connected node found on port {port}[/red]")
                     return
 
-            console.print(f"[bold blue]Syncing heard nodes from {len(managed_nodes)} managed node(s)...[/bold blue]\n")
+            console.print(f"[bold blue]Syncing heard nodes from {len(connected_nodes)} connected node(s)...[/bold blue]\n")
 
             manager = NodeManager()
             total_heard = 0
             total_new = 0
             total_updated = 0
 
-            for node in managed_nodes:
-                console.print(f"Syncing from {node.short_name} ({node.serial_port})...")
+            for node, serial_port in connected_nodes:
+                console.print(f"Syncing from {node.short_name} ({serial_port})...")
                 try:
                     heard_nodes, heard_history = await manager.import_heard_nodes(
-                        node.serial_port, node.id
+                        serial_port, node.id
                     )
 
                     # Track new vs updated nodes
@@ -636,26 +620,26 @@ def export(db: str, output: str | None, output_format: str):
         async with AsyncDatabase(db) as database:
             await database.initialize()
             nodes = await database.get_all_nodes(active_only=False)
+            
+            # Build export data with connection info
+            nodes_data = []
+            for node in nodes:
+                serial_port = await database.get_connection(node.id)
+                nodes_data.append({
+                    "id": node.id,
+                    "short_name": node.short_name,
+                    "long_name": node.long_name,
+                    "serial_port": serial_port,
+                    "hw_model": node.hw_model,
+                    "firmware_version": node.firmware_version,
+                    "last_seen": node.last_seen.isoformat(),
+                    "is_active": node.is_active,
+                    "config": node.config,
+                })
 
         if not nodes:
             console.print("[yellow]No nodes found in database.[/yellow]")
             return
-
-        # Convert nodes to dict
-        nodes_data = [
-            {
-                "id": node.id,
-                "short_name": node.short_name,
-                "long_name": node.long_name,
-                "serial_port": node.serial_port,
-                "hw_model": node.hw_model,
-                "firmware_version": node.firmware_version,
-                "last_seen": node.last_seen.isoformat(),
-                "is_active": node.is_active,
-                "config": node.config,
-            }
-            for node in nodes
-        ]
 
         if output_format == "json":
             output_str = json.dumps(nodes_data, indent=2)

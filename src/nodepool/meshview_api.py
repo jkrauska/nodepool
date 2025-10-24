@@ -157,13 +157,11 @@ class MeshViewAPIClient:
             id=node_id,
             short_name=short_name,
             long_name=long_name,
-            serial_port=None,  # No serial port for API nodes
             hw_model=hw_model,
             firmware_version=firmware_version,
             first_seen=last_seen,  # Use last_seen as first_seen for API nodes
             last_seen=last_seen,
             is_active=True,
-            managed=False,  # API nodes are heard, not managed
             snr=snr,
             hops_away=hops_away,
             config={},  # No config data from API

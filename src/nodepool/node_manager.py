@@ -175,7 +175,6 @@ class NodeManager:
                 id=node_id,
                 short_name=short_name,
                 long_name=long_name,
-                serial_port=port,
                 hw_model=hw_model,
                 firmware_version=firmware_version,
                 last_seen=datetime.now(),
@@ -233,16 +232,17 @@ class NodeManager:
 
         return config
 
-    async def check_node_reachability(self, node: Node) -> NodeStatus:
+    async def check_node_reachability(self, node: Node, serial_port: str | None = None) -> NodeStatus:
         """Check if a node is reachable.
 
         Args:
             node: Node to check
+            serial_port: Serial port to check (required for managed nodes)
 
         Returns:
             NodeStatus object with reachability info
         """
-        if not node.serial_port:
+        if not serial_port:
             return NodeStatus(
                 node=node,
                 reachable=False,
@@ -254,7 +254,7 @@ class NodeManager:
             # Try to connect briefly
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
-                None, self._check_port_reachable, node.serial_port
+                None, self._check_port_reachable, serial_port
             )
 
             return NodeStatus(
@@ -344,17 +344,15 @@ class NodeManager:
 
             user = node_data.get("user", {})
 
-            # Create heard node (marked as not managed)
+            # Create heard node
             heard_node = Node(
                 id=node_id,
                 short_name=user.get("shortName", "?"),
                 long_name=user.get("longName", "Unknown"),
-                serial_port=None,  # Heard nodes don't have serial ports
                 hw_model=user.get("hwModel"),
                 firmware_version=None,  # Don't have firmware version for heard nodes
                 last_seen=datetime.fromtimestamp(node_data.get("lastHeard", timestamp.timestamp())),
                 is_active=True,
-                managed=False,  # This is a heard node, not managed
                 snr=node_data.get("snr"),
                 hops_away=node_data.get("hopsAway"),
                 config={},  # No config for heard nodes

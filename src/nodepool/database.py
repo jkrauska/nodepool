@@ -7,7 +7,7 @@ from typing import Any
 
 import aiosqlite
 
-from nodepool.models import ConfigCheck, ConfigSnapshot, HeardHistory, Node
+from nodepool.models import ConfigCheck, ConfigSnapshot, HeardHistory, Node, Pool, PoolMembership
 
 
 class AsyncDatabase:
@@ -40,20 +40,42 @@ class AsyncDatabase:
 
         await self._conn.executescript(
             """
+            CREATE TABLE IF NOT EXISTS pools (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                description TEXT,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS nodes (
                 id TEXT PRIMARY KEY,
                 short_name TEXT NOT NULL,
                 long_name TEXT NOT NULL,
-                serial_port TEXT,
                 hw_model TEXT,
                 firmware_version TEXT,
                 first_seen TEXT NOT NULL,
                 last_seen TEXT NOT NULL,
                 is_active INTEGER NOT NULL DEFAULT 1,
-                managed INTEGER NOT NULL DEFAULT 1,
                 snr REAL,
                 hops_away INTEGER,
                 config TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS connections (
+                node_id TEXT PRIMARY KEY,
+                serial_port TEXT NOT NULL,
+                connected_at TEXT NOT NULL,
+                FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS pool_memberships (
+                pool_id INTEGER NOT NULL,
+                node_id TEXT NOT NULL,
+                added_at TEXT NOT NULL,
+                FOREIGN KEY (pool_id) REFERENCES pools(id) ON DELETE CASCADE,
+                FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE,
+                PRIMARY KEY (pool_id, node_id)
             );
 
             CREATE TABLE IF NOT EXISTS config_snapshots (
@@ -90,7 +112,8 @@ class AsyncDatabase:
             );
 
             CREATE INDEX IF NOT EXISTS idx_nodes_active ON nodes(is_active);
-            CREATE INDEX IF NOT EXISTS idx_nodes_managed ON nodes(managed);
+            CREATE INDEX IF NOT EXISTS idx_pool_memberships_pool ON pool_memberships(pool_id);
+            CREATE INDEX IF NOT EXISTS idx_pool_memberships_node ON pool_memberships(node_id);
             CREATE INDEX IF NOT EXISTS idx_snapshots_node ON config_snapshots(node_id);
             CREATE INDEX IF NOT EXISTS idx_checks_node ON config_checks(node_id);
             CREATE INDEX IF NOT EXISTS idx_checks_timestamp ON config_checks(timestamp);
@@ -101,32 +124,28 @@ class AsyncDatabase:
         )
         await self._conn.commit()
 
-        # Migrate existing nodes table if needed
-        await self._migrate_schema()
+        # Ensure default pool exists
+        await self._ensure_default_pool()
 
-    async def _migrate_schema(self) -> None:
-        """Migrate existing database schema to add new columns."""
+    async def _ensure_default_pool(self) -> None:
+        """Ensure the default pool exists."""
         if not self._conn:
             return
 
-        # Check if managed column exists
-        cursor = await self._conn.execute("PRAGMA table_info(nodes)")
-        columns = await cursor.fetchall()
-        column_names = [col["name"] for col in columns]
+        cursor = await self._conn.execute(
+            "SELECT id FROM pools WHERE is_default = 1"
+        )
+        existing = await cursor.fetchone()
 
-        # Add missing columns
-        if "managed" not in column_names:
-            await self._conn.execute("ALTER TABLE nodes ADD COLUMN managed INTEGER NOT NULL DEFAULT 1")
-        if "snr" not in column_names:
-            await self._conn.execute("ALTER TABLE nodes ADD COLUMN snr REAL")
-        if "hops_away" not in column_names:
-            await self._conn.execute("ALTER TABLE nodes ADD COLUMN hops_away INTEGER")
-        if "first_seen" not in column_names:
-            # Add first_seen column and backfill with last_seen values
-            await self._conn.execute("ALTER TABLE nodes ADD COLUMN first_seen TEXT")
-            await self._conn.execute("UPDATE nodes SET first_seen = last_seen WHERE first_seen IS NULL")
-
-        await self._conn.commit()
+        if not existing:
+            await self._conn.execute(
+                """
+                INSERT INTO pools (name, description, is_default, created_at)
+                VALUES (?, ?, 1, ?)
+                """,
+                ("default", "Default pool for managed nodes", datetime.now().isoformat()),
+            )
+            await self._conn.commit()
 
     async def save_node(self, node: Node) -> None:
         """Save or update a node in the database.
@@ -140,19 +159,17 @@ class AsyncDatabase:
         await self._conn.execute(
             """
             INSERT INTO nodes (
-                id, short_name, long_name, serial_port, hw_model,
-                firmware_version, first_seen, last_seen, is_active, managed,
+                id, short_name, long_name, hw_model,
+                firmware_version, first_seen, last_seen, is_active,
                 snr, hops_away, config
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 short_name = excluded.short_name,
                 long_name = excluded.long_name,
-                serial_port = excluded.serial_port,
                 hw_model = excluded.hw_model,
                 firmware_version = excluded.firmware_version,
                 last_seen = excluded.last_seen,
                 is_active = excluded.is_active,
-                managed = excluded.managed,
                 snr = excluded.snr,
                 hops_away = excluded.hops_away,
                 config = excluded.config
@@ -161,13 +178,11 @@ class AsyncDatabase:
                 node.id,
                 node.short_name,
                 node.long_name,
-                node.serial_port,
                 node.hw_model,
                 node.firmware_version,
                 node.first_seen.isoformat(),
                 node.last_seen.isoformat(),
                 1 if node.is_active else 0,
-                1 if node.managed else 0,
                 node.snr,
                 node.hops_away,
                 json.dumps(node.config),
@@ -329,16 +344,123 @@ class AsyncDatabase:
         )
         await self._conn.commit()
 
-    async def get_heard_nodes(
-        self,
-        seen_by: str | None = None,
-        managed_only: bool = False,
-    ) -> list[Node]:
-        """Get nodes that have been heard on the mesh.
+    async def get_default_pool(self) -> Pool:
+        """Get the default pool.
+
+        Returns:
+            Pool object for the default pool
+        """
+        if not self._conn:
+            await self.connect()
+
+        cursor = await self._conn.execute(
+            "SELECT * FROM pools WHERE is_default = 1"
+        )
+        row = await cursor.fetchone()
+
+        if not row:
+            raise ValueError("Default pool not found")
+
+        return self._row_to_pool(row)
+
+    async def get_pool_by_name(self, name: str) -> Pool | None:
+        """Get a pool by name.
 
         Args:
-            seen_by: Optional filter by which managed node heard them
-            managed_only: If True, only return nodes marked as not managed
+            name: Pool name
+
+        Returns:
+            Pool object or None if not found
+        """
+        if not self._conn:
+            await self.connect()
+
+        cursor = await self._conn.execute(
+            "SELECT * FROM pools WHERE name = ?",
+            (name,),
+        )
+        row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        return self._row_to_pool(row)
+
+    async def save_connection(self, node_id: str, serial_port: str) -> None:
+        """Save a node connection (managed node with serial port).
+
+        Args:
+            node_id: Node ID
+            serial_port: Serial port path
+        """
+        if not self._conn:
+            await self.connect()
+
+        await self._conn.execute(
+            """
+            INSERT INTO connections (node_id, serial_port, connected_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(node_id) DO UPDATE SET
+                serial_port = excluded.serial_port,
+                connected_at = excluded.connected_at
+            """,
+            (node_id, serial_port, datetime.now().isoformat()),
+        )
+        await self._conn.commit()
+
+    async def get_connected_nodes(self) -> list[tuple[Node, str]]:
+        """Get all connected (managed) nodes with their serial ports.
+
+        Returns:
+            List of tuples (Node, serial_port)
+        """
+        if not self._conn:
+            await self.connect()
+
+        query = """
+            SELECT n.*, c.serial_port
+            FROM nodes n
+            JOIN connections c ON n.id = c.node_id
+            WHERE n.is_active = 1
+            ORDER BY n.short_name
+        """
+
+        cursor = await self._conn.execute(query)
+        rows = await cursor.fetchall()
+
+        result = []
+        for row in rows:
+            node = self._row_to_node(row)
+            serial_port = row["serial_port"]
+            result.append((node, serial_port))
+
+        return result
+
+    async def add_node_to_pool(self, pool_id: int, node_id: str) -> None:
+        """Add a node to a pool.
+
+        Args:
+            pool_id: Pool ID
+            node_id: Node ID
+        """
+        if not self._conn:
+            await self.connect()
+
+        await self._conn.execute(
+            """
+            INSERT INTO pool_memberships (pool_id, node_id, added_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(pool_id, node_id) DO NOTHING
+            """,
+            (pool_id, node_id, datetime.now().isoformat()),
+        )
+        await self._conn.commit()
+
+    async def get_pool_nodes(self, pool_id: int) -> list[Node]:
+        """Get nodes in a pool.
+
+        Args:
+            pool_id: Pool ID
 
         Returns:
             List of Node objects
@@ -346,24 +468,72 @@ class AsyncDatabase:
         if not self._conn:
             await self.connect()
 
-        query = "SELECT * FROM nodes WHERE managed = 0"
-        params = []
+        query = """
+            SELECT n.*
+            FROM nodes n
+            JOIN pool_memberships pm ON n.id = pm.node_id
+            WHERE pm.pool_id = ?
+            ORDER BY n.short_name
+        """
 
-        if seen_by:
-            # Add filter based on heard_history
-            query = """
-                SELECT DISTINCT n.* FROM nodes n
-                JOIN heard_history h ON n.id = h.node_id
-                WHERE n.managed = 0 AND h.seen_by = ?
-            """
-            params.append(seen_by)
-
-        query += " ORDER BY last_seen DESC"
-
-        cursor = await self._conn.execute(query, params)
+        cursor = await self._conn.execute(query, [pool_id])
         rows = await cursor.fetchall()
 
         return [self._row_to_node(row) for row in rows]
+
+    async def get_heard_nodes(self, seen_by: str | None = None) -> list[Node]:
+        """Get nodes that are heard (not connected).
+
+        Args:
+            seen_by: Optional filter by which node heard them
+
+        Returns:
+            List of heard Node objects
+        """
+        if not self._conn:
+            await self.connect()
+
+        if seen_by:
+            query = """
+                SELECT DISTINCT n.*
+                FROM nodes n
+                LEFT JOIN connections c ON n.id = c.node_id
+                JOIN heard_history h ON n.id = h.node_id
+                WHERE c.node_id IS NULL AND h.seen_by = ?
+                ORDER BY n.last_seen DESC
+            """
+            cursor = await self._conn.execute(query, (seen_by,))
+        else:
+            query = """
+                SELECT n.*
+                FROM nodes n
+                LEFT JOIN connections c ON n.id = c.node_id
+                WHERE c.node_id IS NULL
+                ORDER BY n.last_seen DESC
+            """
+            cursor = await self._conn.execute(query)
+
+        rows = await cursor.fetchall()
+        return [self._row_to_node(row) for row in rows]
+
+    async def get_connection(self, node_id: str) -> str | None:
+        """Get serial port connection for a node.
+
+        Args:
+            node_id: Node ID
+
+        Returns:
+            Serial port or None if not connected
+        """
+        if not self._conn:
+            await self.connect()
+
+        cursor = await self._conn.execute(
+            "SELECT serial_port FROM connections WHERE node_id = ?",
+            (node_id,),
+        )
+        row = await cursor.fetchone()
+        return row["serial_port"] if row else None
 
     def _row_to_node(self, row: aiosqlite.Row) -> Node:
         """Convert database row to Node object.
@@ -374,42 +544,35 @@ class AsyncDatabase:
         Returns:
             Node object
         """
-        # Handle both old and new schema
-        try:
-            managed = bool(row["managed"])
-        except (KeyError, IndexError):
-            managed = True  # Default to managed=True for old records
-
-        try:
-            snr = row["snr"]
-        except (KeyError, IndexError):
-            snr = None
-
-        try:
-            hops_away = row["hops_away"]
-        except (KeyError, IndexError):
-            hops_away = None
-
-        try:
-            first_seen = datetime.fromisoformat(row["first_seen"])
-        except (KeyError, IndexError):
-            # For old records without first_seen, use last_seen as fallback
-            first_seen = datetime.fromisoformat(row["last_seen"])
-
         return Node(
             id=row["id"],
             short_name=row["short_name"],
             long_name=row["long_name"],
-            serial_port=row["serial_port"],
             hw_model=row["hw_model"],
             firmware_version=row["firmware_version"],
-            first_seen=first_seen,
+            first_seen=datetime.fromisoformat(row["first_seen"]),
             last_seen=datetime.fromisoformat(row["last_seen"]),
             is_active=bool(row["is_active"]),
-            managed=managed,
-            snr=snr,
-            hops_away=hops_away,
+            snr=row["snr"],
+            hops_away=row["hops_away"],
             config=json.loads(row["config"]),
+        )
+
+    def _row_to_pool(self, row: aiosqlite.Row) -> Pool:
+        """Convert database row to Pool object.
+
+        Args:
+            row: Database row
+
+        Returns:
+            Pool object
+        """
+        return Pool(
+            id=row["id"],
+            name=row["name"],
+            description=row["description"],
+            is_default=bool(row["is_default"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
         )
 
     def _row_to_check(self, row: aiosqlite.Row) -> ConfigCheck:
