@@ -744,6 +744,7 @@ def info(node_id: str, db: str):
                 console.print(f"    Role: {device.get('role', 'Not set')}")
 
             if "security" in node.config:
+                import base64
                 security = node.config["security"]
                 console.print("  Security:")
                 
@@ -752,16 +753,22 @@ def info(node_id: str, db: str):
                 admin_keys_set = security.get('admin_keys_set', [])
                 if admin_keys:
                     console.print(f"    Admin Keys: {len(admin_keys)} set")
-                    for i, key in enumerate(admin_keys):
+                    for i, key_hex in enumerate(admin_keys):
                         slot = admin_keys_set[i] if i < len(admin_keys_set) else i
-                        console.print(f"      [{slot}] {key}")
+                        # Convert hex to base64 for display (matches Meshtastic app format)
+                        key_bytes = bytes.fromhex(key_hex)
+                        key_b64 = base64.b64encode(key_bytes).decode('ascii')
+                        console.print(f"      [{slot}] {key_b64}")
                 else:
                     console.print("    Admin Keys: None set")
                 
                 # Display PKI keys
                 if security.get('public_key'):
-                    pub_key = security['public_key']
-                    console.print(f"    Public Key: {pub_key}")
+                    pub_key_hex = security['public_key']
+                    # Convert to base64 for display
+                    pub_key_bytes = bytes.fromhex(pub_key_hex)
+                    pub_key_b64 = base64.b64encode(pub_key_bytes).decode('ascii')
+                    console.print(f"    Public Key: {pub_key_b64}")
                 if security.get('private_key'):
                     console.print(f"    Private Key: XXXXX--PRIVATE-KEY--XXXXX (hidden)")
                 
