@@ -866,6 +866,8 @@ class NodeManager:
     ) -> bool:
         """Blocking remote admin verification (runs in thread pool).
         
+        Sends a get_owner admin request to test PKI authentication.
+        
         Args:
             via_connection: Connection string for local node
             target_node_id: Target node ID
@@ -875,6 +877,8 @@ class NodeManager:
             True if admin access verified
         """
         import time
+        import threading
+        from meshtastic import admin_pb2, portnums_pb2
         
         try:
             # Connect to local node
@@ -910,13 +914,50 @@ class NodeManager:
                         f"Available nodes: {available}..."
                     )
             
-            # TODO: Send simple admin request (get node info or similar)
-            # This is a placeholder - need to research Meshtastic admin API
-            logger.info(f"Admin verification for {target_node_id} via {via_connection}")
-            logger.warning("Admin verification not yet implemented - assuming success based on node visibility")
+            # Set up response handler
+            response_received = threading.Event()
+            response_data = {}
             
-            interface.close()
-            return True
+            def on_receive(packet, interface_obj):
+                """Handle incoming packets."""
+                try:
+                    if 'decoded' in packet and packet['decoded'].get('portnum') == 'ADMIN_APP':
+                        # Check if this is from our target node
+                        from_id = packet.get('fromId', packet.get('from'))
+                        if from_id == target_node_id or f"!{from_id}" == target_node_id:
+                            logger.info(f"Received admin response from {from_id}")
+                            response_data['packet'] = packet
+                            response_received.set()
+                except Exception as e:
+                    logger.error(f"Error in response handler: {e}")
+            
+            # Attach response handler
+            interface.on_receive = on_receive
+            
+            # Create admin message - request owner info
+            admin_msg = admin_pb2.AdminMessage()
+            admin_msg.get_owner_request = True
+            
+            logger.info(f"Sending get_owner admin request to {target_node_id}")
+            
+            # Send admin request
+            interface.sendData(
+                admin_msg.SerializeToString(),
+                destinationId=target_node_id,
+                portNum=portnums_pb2.PortNum.ADMIN_APP,
+                wantAck=True,
+                wantResponse=True
+            )
+            
+            # Wait for response
+            if response_received.wait(timeout=timeout):
+                logger.info("Admin request successful - received response")
+                interface.close()
+                return True
+            else:
+                logger.warning(f"No admin response received within {timeout}s")
+                interface.close()
+                return False
             
         except Exception as e:
             logger.error(f"Admin verification failed: {e}")
