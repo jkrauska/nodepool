@@ -99,6 +99,7 @@ class HeardHistory(BaseModel):
     )
 
     node_id: str = Field(..., description="Node ID that was heard")
+    long_name: str = Field(..., description="Long name of the node at time of hearing")
     seen_by: str = Field(..., description="Managed node ID that heard this node")
     timestamp: datetime = Field(default_factory=datetime.now, description="When the node was heard")
     snr: float | None = Field(None, description="Signal-to-noise ratio at time of hearing")

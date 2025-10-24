@@ -101,6 +101,7 @@ class AsyncDatabase:
             CREATE TABLE IF NOT EXISTS heard_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 node_id TEXT NOT NULL,
+                long_name TEXT NOT NULL,
                 seen_by TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
                 snr REAL,
@@ -337,12 +338,13 @@ class AsyncDatabase:
         await self._conn.execute(
             """
             INSERT INTO heard_history (
-                node_id, seen_by, timestamp, snr, hops_away,
+                node_id, long_name, seen_by, timestamp, snr, hops_away,
                 position_lat, position_lon
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 history.node_id,
+                history.long_name,
                 history.seen_by,
                 history.timestamp.isoformat(),
                 history.snr,

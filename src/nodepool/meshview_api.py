@@ -77,6 +77,7 @@ class MeshViewAPIClient:
                 
                 history = HeardHistory(
                     node_id=node.id,
+                    long_name=node.long_name,
                     seen_by="meshviewAPI",
                     timestamp=node.last_seen,
                     snr=node.snr,

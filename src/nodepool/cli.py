@@ -41,6 +41,72 @@ def cli():
     """Nodepool - Manage and maintain a group of Meshtastic nodes."""
 
 
+@cli.group()
+def connection():
+    """Manage node connections."""
+
+
+@connection.command("add")
+@click.argument("connection_string")
+@click.option(
+    "--db",
+    default="nodepool.db",
+    help="Database file path",
+    type=click.Path(),
+)
+def connection_add(connection_string: str, db: str):
+    """Add a managed node connection (serial or TCP).
+    
+    CONNECTION_STRING can be:
+    - Serial port: /dev/cu.usbmodem123, /dev/ttyUSB0, COM3
+    - TCP: tcp://192.168.1.100:4403
+    
+    Examples:
+    \b
+      nodepool connection add /dev/cu.usbmodem123
+      nodepool connection add tcp://192.168.1.100:4403
+      nodepool connection add COM3
+    """
+    async def _connection_add():
+        console.print(f"[bold blue]Connecting to node at {connection_string}...[/bold blue]")
+        
+        manager = NodeManager()
+        
+        try:
+            # Connect to the node and get info
+            with console.status("[bold green]Connecting..."):
+                node = await manager.connect_to_node(connection_string)
+            
+            console.print(f"[green]✓[/green] Connected to [bold]{node.short_name}[/bold] ({node.long_name})")
+            console.print(f"  Node ID: {node.id}")
+            console.print(f"  Hardware: {node.hw_model}")
+            console.print(f"  Firmware: {node.firmware_version}")
+            
+            # Save to database
+            console.print("\nSaving to database...")
+            async with AsyncDatabase(db) as database:
+                await database.initialize()
+                
+                # Save node info
+                await database.save_node(node)
+                
+                # Save connection (this makes it "managed")
+                await database.save_connection(node.id, connection_string)
+            
+            console.print(f"[green]✓ Successfully added managed node connection[/green]")
+            console.print("\n[dim]Tips:[/dim]")
+            console.print("  - Run [bold]nodepool sync[/bold] to import heard nodes from this node")
+            console.print("  - Run [bold]nodepool list[/bold] to see all connected nodes")
+            
+        except Exception as e:
+            console.print(f"[red]✗ Failed to connect: {e}[/red]")
+            import traceback
+            if "--verbose" in sys.argv:
+                console.print(f"[dim]{traceback.format_exc()}[/dim]")
+    
+    run_async(_connection_add())
+
+
 @cli.command()
 @click.option(
     "--db",
@@ -567,6 +633,7 @@ def heard(db: str, seen_by: str | None):
 
         table = Table(title="Heard Nodes (from Mesh)")
         table.add_column("Short Name", style="cyan", no_wrap=True)
+        table.add_column("Long Name", style="white")
         table.add_column("Node ID", style="magenta")
         table.add_column("Hardware", style="green")
         table.add_column("SNR", style="yellow")
@@ -579,6 +646,7 @@ def heard(db: str, seen_by: str | None):
 
             table.add_row(
                 node.short_name,
+                node.long_name,
                 node.id,
                 node.hw_model or "Unknown",
                 snr_str,

@@ -115,6 +115,95 @@ class NodeManager:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self._scan_port_blocking, port)
 
+    async def connect_to_node(self, connection_string: str) -> Node:
+        """Connect to a node via serial or TCP and return node info.
+
+        Args:
+            connection_string: Connection string (e.g., /dev/cu.usbmodem123, tcp://192.168.1.100:4403)
+
+        Returns:
+            Node object with connection info
+
+        Raises:
+            Exception: If connection fails or no node info available
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._connect_to_node_blocking, connection_string)
+
+    def _connect_to_node_blocking(self, connection_string: str) -> Node:
+        """Blocking connection to node (runs in thread pool).
+
+        Args:
+            connection_string: Connection string (serial port or tcp://host:port)
+
+        Returns:
+            Node object
+
+        Raises:
+            Exception: If connection fails
+        """
+        try:
+            # Determine connection type and create appropriate interface
+            if connection_string.startswith("tcp://"):
+                import meshtastic.tcp_interface
+                # Extract host:port from tcp://host:port
+                host_port = connection_string[6:]  # Remove "tcp://"
+                interface = meshtastic.tcp_interface.TCPInterface(hostname=host_port)
+            else:
+                import meshtastic.serial_interface
+                interface = meshtastic.serial_interface.SerialInterface(connection_string)
+
+            # Get node info
+            my_info = interface.myInfo
+            if not my_info:
+                interface.close()
+                raise ValueError(f"No node info available on {connection_string}")
+
+            # Get my node number and convert to hex ID format for lookup
+            my_node_num = my_info.my_node_num
+            node_id = f"!{my_node_num:08x}"
+
+            # Look up node details in the nodes dictionary
+            if node_id not in interface.nodes:
+                interface.close()
+                raise ValueError(f"Node {node_id} not found in nodes dict")
+
+            node_data = interface.nodes[node_id]
+
+            # Extract node details
+            user = node_data.get("user", {})
+            node_id = user.get("id", "unknown")
+            short_name = user.get("shortName", "UNKNOWN")
+            long_name = user.get("longName", "Unknown Node")
+            hw_model = user.get("hwModel", "UNKNOWN")
+
+            # Get firmware version
+            firmware_version = None
+            if hasattr(interface, "metadata") and hasattr(interface.metadata, "firmware_version"):
+                firmware_version = interface.metadata.firmware_version
+            if not firmware_version:
+                firmware_version = my_info.pio_env
+
+            # Get configuration
+            config = self._extract_config(interface)
+
+            interface.close()
+
+            return Node(
+                id=node_id,
+                short_name=short_name,
+                long_name=long_name,
+                hw_model=hw_model,
+                firmware_version=firmware_version,
+                last_seen=datetime.now(),
+                is_active=True,
+                config=config,
+            )
+
+        except Exception as e:
+            logger.debug(f"Failed to connect to {connection_string}: {e}")
+            raise
+
     def _scan_port_blocking(self, port: str) -> Node:
         """Blocking serial port scan (runs in thread pool).
 
@@ -301,32 +390,38 @@ class NodeManager:
         tasks = [self.check_node_reachability(node) for node in nodes]
         return await asyncio.gather(*tasks)
 
-    async def import_heard_nodes(self, port: str, managed_node_id: str) -> tuple[list[Node], list[HeardHistory]]:
+    async def import_heard_nodes(self, connection_string: str, managed_node_id: str) -> tuple[list[Node], list[HeardHistory]]:
         """Import all heard nodes from a connected device.
 
         Args:
-            port: Serial port of the managed node
+            connection_string: Connection string (serial port or tcp://host:port)
             managed_node_id: ID of the managed node doing the hearing
 
         Returns:
             Tuple of (heard_nodes, heard_history_entries)
         """
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._import_heard_nodes_blocking, port, managed_node_id)
+        return await loop.run_in_executor(None, self._import_heard_nodes_blocking, connection_string, managed_node_id)
 
-    def _import_heard_nodes_blocking(self, port: str, managed_node_id: str) -> tuple[list[Node], list[HeardHistory]]:
+    def _import_heard_nodes_blocking(self, connection_string: str, managed_node_id: str) -> tuple[list[Node], list[HeardHistory]]:
         """Blocking import of heard nodes (runs in thread pool).
 
         Args:
-            port: Serial port of the managed node
+            connection_string: Connection string (serial port or tcp://host:port)
             managed_node_id: ID of the managed node doing the hearing
 
         Returns:
             Tuple of (heard_nodes, heard_history_entries)
         """
-        import meshtastic.serial_interface
-
-        interface = meshtastic.serial_interface.SerialInterface(port)
+        # Determine connection type and create appropriate interface
+        if connection_string.startswith("tcp://"):
+            import meshtastic.tcp_interface
+            # Extract host:port from tcp://host:port
+            host_port = connection_string[6:]  # Remove "tcp://"
+            interface = meshtastic.tcp_interface.TCPInterface(hostname=host_port)
+        else:
+            import meshtastic.serial_interface
+            interface = meshtastic.serial_interface.SerialInterface(connection_string)
 
         heard_nodes = []
         heard_history = []
@@ -363,6 +458,7 @@ class NodeManager:
             position = node_data.get("position", {})
             history_entry = HeardHistory(
                 node_id=node_id,
+                long_name=user.get("longName", "Unknown"),
                 seen_by=managed_node_id,
                 timestamp=timestamp,
                 snr=node_data.get("snr"),
