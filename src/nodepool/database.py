@@ -419,6 +419,21 @@ class AsyncDatabase:
         )
         await self._conn.commit()
 
+    async def remove_connection(self, node_id: str) -> None:
+        """Remove a connection for a node.
+
+        Args:
+            node_id: Node ID
+        """
+        if not self._conn:
+            await self.connect()
+
+        await self._conn.execute(
+            "DELETE FROM connections WHERE node_id = ?",
+            (node_id,),
+        )
+        await self._conn.commit()
+
     async def get_connected_nodes(self) -> list[tuple[Node, str]]:
         """Get all connected nodes with their connection strings.
 

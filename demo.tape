@@ -47,37 +47,26 @@ Enter
 Wait+Line@30s /$/
 Sleep 3s
 
-# # Show node info
-# Type "clear"
-# Enter
-# Sleep 500ms
 
-# Type "# Get detailed info about a node"
-# Enter
-# Type "nodepool info !ccddeeff"
-# Sleep 500ms
-# Enter
-# Sleep 3s
-
-# # Sync heard nodes
-# Type "clear"
-# Enter
-# Sleep 500ms
+Type "# Sync heard nodes from meshview API"
+Enter
+Type "nodepool sync-meshview"
+Sleep 500ms
+Enter
+Wait+Line@30s /$/
+Sleep 3s
 
 
+Type "# Get detailed info about a node"
+Enter
+Type "nodepool info 29f35f73"
+Sleep 500ms
+Enter
+Sleep 3s
 
-# # Show heard nodes
-# Type "clear"
-# Enter
-# Sleep 500ms
 
-# Type "# Show nodes heard on the mesh"
-# Enter
-# Type "nodepool heard"
-# Sleep 500ms
-# Enter
-# Sleep 3s
+
 
 
 # Final pause
-Sleep 10s
+Sleep 15s

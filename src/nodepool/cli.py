@@ -46,6 +46,101 @@ def connection():
     """Manage node connections."""
 
 
+@connection.command("list")
+@click.option(
+    "--db",
+    default="nodepool.db",
+    help="Database file path",
+    type=click.Path(),
+)
+def connection_list(db: str):
+    """List all managed node connections."""
+    async def _connection_list():
+        async with AsyncDatabase(db) as database:
+            await database.initialize()
+            connections = await database.get_connected_nodes()
+        
+        if not connections:
+            console.print("[yellow]No managed connections found.[/yellow]")
+            console.print("Use [bold]nodepool connection add[/bold] to add connections.")
+            return
+        
+        table = Table(title="Managed Connections")
+        table.add_column("Node", style="cyan", no_wrap=True)
+        table.add_column("ID", style="magenta")
+        table.add_column("Connection", style="yellow")
+        
+        for node, connection_string in connections:
+            table.add_row(
+                node.short_name,
+                node.id,
+                connection_string,
+            )
+        
+        console.print(table)
+        console.print(f"\nTotal: {len(connections)} managed connection(s)")
+    
+    run_async(_connection_list())
+
+
+@connection.command("remove")
+@click.argument("node_id")
+@click.option(
+    "--db",
+    default="nodepool.db",
+    help="Database file path",
+    type=click.Path(),
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip confirmation prompt",
+)
+def connection_remove(node_id: str, db: str, yes: bool):
+    """Remove a managed connection.
+    
+    NODE_ID can be specified with or without the ! prefix.
+    This removes the connection but keeps the node data.
+    """
+    # Normalize node_id - prepend ! if not present
+    if not node_id.startswith("!"):
+        node_id = f"!{node_id}"
+    
+    async def _connection_remove():
+        async with AsyncDatabase(db) as database:
+            await database.initialize()
+            
+            # Get node info
+            node = await database.get_node(node_id)
+            if not node:
+                console.print(f"[red]Node {node_id} not found in database.[/red]")
+                return
+            
+            # Get connection
+            connection = await database.get_connection(node_id)
+            if not connection:
+                console.print(f"[yellow]Node {node.short_name} ({node_id}) has no managed connection.[/yellow]")
+                return
+            
+            # Confirm unless --yes
+            if not yes:
+                console.print(f"\n[bold]Remove connection for {node.short_name} ({node_id})?[/bold]")
+                console.print(f"  Current: {connection}")
+                console.print("  This will remove the managed connection but keep the node data.")
+                
+                if not click.confirm("Continue?", default=False):
+                    console.print("Cancelled.")
+                    return
+            
+            # Remove the connection
+            await database.remove_connection(node_id)
+            console.print(f"[green]✓ Removed connection for {node.short_name} ({node_id})[/green]")
+            console.print(f"[dim]Node data retained. Node will appear in heard nodes list.[/dim]")
+    
+    run_async(_connection_remove())
+
+
 @connection.command("add")
 @click.argument("connection_string")
 @click.option(
