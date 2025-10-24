@@ -182,7 +182,144 @@ class ConfigChecker:
             for i in range(len(self.expected_channels)):
                 checks.append(await self.check_channel(node, channel_index=i + 1))
 
+        # Security checks (always run if config available)
+        if node.config.get("security"):
+            checks.append(await self.check_admin_key(node))
+            checks.append(await self.check_serial_disabled(node))
+        
+        # Channel encryption checks
+        if node.config.get("channels"):
+            checks.extend(await self.check_channel_encryption(node))
+
         return checks
+
+    async def check_admin_key(self, node: Node) -> ConfigCheck:
+        """Check if node has admin key configured.
+
+        Args:
+            node: Node to check
+
+        Returns:
+            ConfigCheck result
+        """
+        security = node.config.get("security", {})
+        admin_key_set = security.get("admin_key_set", False)
+        admin_key = security.get("admin_key")
+
+        if not admin_key_set:
+            return ConfigCheck(
+                node_id=node.id,
+                check_type="admin_key",
+                expected_value="Admin key set",
+                actual_value=None,
+                status="warning",
+                message="Admin key not configured",
+            )
+
+        # Check for default/weak keys (AQ== in base64 is 0x01)
+        if admin_key == "01" or admin_key == "00":
+            return ConfigCheck(
+                node_id=node.id,
+                check_type="admin_key",
+                expected_value="Secure admin key",
+                actual_value=f"{admin_key[:8]}...",
+                status="fail",
+                message="Admin key appears to be default/weak",
+            )
+
+        return ConfigCheck(
+            node_id=node.id,
+            check_type="admin_key",
+            expected_value="Admin key set",
+            actual_value=f"{admin_key[:8]}..." if admin_key else None,
+            status="pass",
+            message="Admin key is configured",
+        )
+
+    async def check_channel_encryption(self, node: Node) -> list[ConfigCheck]:
+        """Check if channels have encryption configured.
+
+        Args:
+            node: Node to check
+
+        Returns:
+            List of ConfigCheck results for each channel
+        """
+        checks = []
+        channels = node.config.get("channels", [])
+
+        if not channels:
+            return [
+                ConfigCheck(
+                    node_id=node.id,
+                    check_type="channel_encryption",
+                    expected_value="Channels configured",
+                    actual_value=None,
+                    status="warning",
+                    message="No channels configured",
+                )
+            ]
+
+        for channel in channels:
+            channel_name = channel.get("name", f"Channel {channel.get('index', '?')}")
+            psk_set = channel.get("psk_set", False)
+
+            if not psk_set:
+                checks.append(
+                    ConfigCheck(
+                        node_id=node.id,
+                        check_type="channel_encryption",
+                        expected_value=f"{channel_name} encrypted",
+                        actual_value="Not encrypted",
+                        status="warning",
+                        message=f"{channel_name} is not encrypted",
+                    )
+                )
+            else:
+                psk = channel.get("psk", "")
+                checks.append(
+                    ConfigCheck(
+                        node_id=node.id,
+                        check_type="channel_encryption",
+                        expected_value=f"{channel_name} encrypted",
+                        actual_value=f"PSK: {psk[:8]}..." if psk else "encrypted",
+                        status="pass",
+                        message=f"{channel_name} is encrypted",
+                    )
+                )
+
+        return checks
+
+    async def check_serial_disabled(self, node: Node) -> ConfigCheck:
+        """Check if serial console is disabled (optional security).
+
+        Args:
+            node: Node to check
+
+        Returns:
+            ConfigCheck result
+        """
+        security = node.config.get("security", {})
+        serial_enabled = security.get("serial_enabled", True)
+
+        if serial_enabled:
+            return ConfigCheck(
+                node_id=node.id,
+                check_type="serial_access",
+                expected_value="Serial disabled",
+                actual_value="Serial enabled",
+                status="warning",
+                message="Serial console is enabled (security consideration)",
+            )
+
+        return ConfigCheck(
+            node_id=node.id,
+            check_type="serial_access",
+            expected_value="Serial disabled",
+            actual_value="Serial disabled",
+            status="pass",
+            message="Serial console is disabled",
+        )
 
     async def check_all_nodes(self, nodes: list[Node]) -> list[ConfigCheck]:
         """Run configuration checks on all nodes.

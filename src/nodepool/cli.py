@@ -399,7 +399,15 @@ def list(db: str, show_all: bool, connected_only: bool, heard_only: bool):
     type=click.Path(),
 )
 def info(node_id: str, db: str):
-    """Show detailed information about a specific node."""
+    """Show detailed information about a specific node.
+    
+    NODE_ID can be specified with or without the ! prefix.
+    Examples: 'abc123' or '!abc123'
+    """
+    # Normalize node_id - prepend ! if not present
+    if not node_id.startswith("!"):
+        node_id = f"!{node_id}"
+    
     async def _info():
         async with AsyncDatabase(db) as database:
             await database.initialize()
@@ -438,11 +446,24 @@ def info(node_id: str, db: str):
                 console.print("  Device:")
                 console.print(f"    Role: {device.get('role', 'Not set')}")
 
+            if "security" in node.config:
+                security = node.config["security"]
+                console.print("  Security:")
+                admin_key = security.get('admin_key')
+                if admin_key:
+                    console.print(f"    Admin Key: {admin_key[:16]}... ({len(admin_key)//2} bytes)")
+                else:
+                    console.print("    Admin Key: Not set")
+                console.print(f"    Serial Enabled: {security.get('serial_enabled', 'Unknown')}")
+                console.print(f"    Admin Channel: {security.get('admin_channel_index', 0)}")
+
             if node.config.get("channels"):
                 console.print("  Channels:")
                 for channel in node.config["channels"]:
+                    psk = channel.get('psk')
+                    psk_info = f" [PSK: {psk[:8]}...]" if psk else " [Not encrypted]"
                     console.print(
-                        f"    [{channel.get('index', '?')}] {channel.get('name', 'Unnamed')}"
+                        f"    [{channel.get('index', '?')}] {channel.get('name', 'Unnamed')}{psk_info}"
                     )
 
         console.print()

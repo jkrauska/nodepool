@@ -410,14 +410,35 @@ class NodeManager:
                             "role": getattr(device_config, "role", None),
                         }
 
-                # Extract channels (same for both APIs)
+                # Extract security config (modern API)
+                if hasattr(local_config, "security"):
+                    security = local_config.security
+                    # Store admin_key as hex string (it's a bytes field)
+                    admin_key_bytes = getattr(security, "admin_key", b"")
+                    public_key_bytes = getattr(security, "public_key", b"")
+                    
+                    config["security"] = {
+                        "admin_key": admin_key_bytes.hex() if admin_key_bytes else None,
+                        "admin_key_set": bool(admin_key_bytes),
+                        "public_key": public_key_bytes.hex() if public_key_bytes else None,
+                        "public_key_set": bool(public_key_bytes),
+                        "serial_enabled": getattr(security, "serial_enabled", True),
+                        "admin_channel_index": getattr(security, "admin_channel_index", 0),
+                    }
+                
+                # Extract channels with encryption info (same for both APIs)
                 if hasattr(local_node, "channels"):
                     config["channels"] = []
                     for channel in local_node.channels:
+                        psk_bytes = getattr(channel, "psk", b"")
                         config["channels"].append(
                             {
                                 "name": getattr(channel, "name", ""),
                                 "index": getattr(channel, "index", 0),
+                                "psk": psk_bytes.hex() if psk_bytes else None,
+                                "psk_set": bool(psk_bytes),
+                                "uplink_enabled": getattr(channel, "uplink_enabled", False),
+                                "downlink_enabled": getattr(channel, "downlink_enabled", False),
                             }
                         )
 
