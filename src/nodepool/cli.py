@@ -791,11 +791,19 @@ def list(db: str, show_all: bool, connected_only: bool, heard_only: bool):
     help="Database file path",
     type=click.Path(),
 )
-def info(node_id: str, db: str):
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show full configuration JSON",
+)
+def info(node_id: str, db: str, verbose: bool):
     """Show detailed information about a specific node.
     
     NODE_ID can be specified with or without the ! prefix.
     Examples: 'abc123' or '!abc123'
+    
+    Use --verbose to show full configuration JSON.
     """
     # Normalize node_id - prepend ! if not present
     if not node_id.startswith("!"):
@@ -1027,6 +1035,12 @@ def info(node_id: str, db: str):
                     console.print("  [cyan]Paxcounter:[/cyan]")
                     console.print(f"    Enabled: {pc['enabled']}")
                     console.print(f"    Update Interval: {pc.get('paxcounter_update_interval', 0)}s")
+        
+        # Show full config JSON if verbose flag is set
+        if verbose and node.config:
+            import json
+            console.print("\n[bold]Full Configuration (JSON):[/bold]")
+            console.print(json.dumps(node.config, indent=2))
 
         console.print()
 
