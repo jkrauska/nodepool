@@ -1659,16 +1659,116 @@ class NodeManager:
                     
                     print(f"  ✓ Metadata request completed")
                     
-                    # Note: Full config retrieval over mesh is not currently reliable
-                    # The library caches config after first retrieval, making subsequent
-                    # requests appear successful (0.1s) but actually returning cached data
-                    # rather than fresh network responses.
-                    # 
-                    # For now, we only retrieve firmware version (metadata) which works reliably.
-                    # Full config retrieval would require significant library modifications.
+                    # Now request config sections using stream interceptor to bypass caching
+                    print(f"\n  Retrieving config sections (using stream interceptor)...")
                     
-                    print(f"\n  Note: Full config retrieval over mesh not yet implemented")
-                    print(f"  (Library limitations prevent reliable multi-section retrieval)")
+                    from meshtastic.protobuf import config_pb2, module_config_pb2
+                    
+                    # Install stream interceptor to capture admin responses
+                    handler = MessageResponseHandler(interface)
+                    
+                    # Define config sections to request
+                    config_sections = [
+                        ("device", config_pb2.Config.DESCRIPTOR.fields_by_name["device"]),
+                        ("position", config_pb2.Config.DESCRIPTOR.fields_by_name["position"]),
+                        ("power", config_pb2.Config.DESCRIPTOR.fields_by_name["power"]),
+                        ("network", config_pb2.Config.DESCRIPTOR.fields_by_name["network"]),
+                        ("display", config_pb2.Config.DESCRIPTOR.fields_by_name["display"]),
+                        ("lora", config_pb2.Config.DESCRIPTOR.fields_by_name["lora"]),
+                        ("bluetooth", config_pb2.Config.DESCRIPTOR.fields_by_name["bluetooth"]),
+                    ]
+                    
+                    module_sections = [
+                        ("mqtt", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["mqtt"]),
+                        ("serial", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["serial"]),
+                        ("telemetry", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["telemetry"]),
+                    ]
+                    
+                    # Combine with type labels
+                    all_sections = []
+                    for name, field in config_sections:
+                        all_sections.append((name, field, "LocalConfig"))
+                    for name, field in module_sections:
+                        all_sections.append((name, field, "ModuleConfig"))
+                    
+                    total_sections = len(all_sections)
+                    successful_sections = 0
+                    failed_sections = []
+                    
+                    # Request each section with stream interceptor
+                    for idx, (section_name, section_field, config_type) in enumerate(all_sections, 1):
+                        try:
+                            type_label = "LocalConfig" if config_type == "LocalConfig" else "ModuleConfig"
+                            print(f"[{idx}/{total_sections}] Requesting {section_name} ({type_label})...", end="", flush=True)
+                            
+                            start_time = time.time()
+                            
+                            # Create admin message
+                            p = admin_pb2.AdminMessage()
+                            if config_type == "LocalConfig":
+                                p.get_config_request = section_field.index
+                            else:
+                                p.get_module_config_request = section_field.index
+                            
+                            # Send request and get packet ID
+                            packet_id = remote_node._sendAdmin(p, wantResponse=True, onResponse=remote_node.onResponseRequestSettings)
+                            
+                            # Register packet for tracking
+                            handler.register_packet(packet_id)
+                            
+                            # Wait for admin response from stream interceptor
+                            admin_response = handler.wait_for_admin_response(packet_id, timeout=20)
+                            
+                            elapsed = time.time() - start_time
+                            
+                            if admin_response:
+                                # Parse the admin message for config data
+                                admin_msg = admin_response["admin_message"]
+                                
+                                # Check for LocalConfig response
+                                if hasattr(admin_msg, "get_config_response"):
+                                    config_response = admin_msg.get_config_response
+                                    # Find which field is set
+                                    for field in config_response.DESCRIPTOR.fields:
+                                        if config_response.HasField(field.name):
+                                            section_data = getattr(config_response, field.name)
+                                            responses["config"][section_name] = section_data
+                                            logger.info(f"✓ Captured {section_name} from admin response")
+                                            successful_sections += 1
+                                            print(f"\r[{idx}/{total_sections}] Received {section_name} config ✓ ({elapsed:.1f}s)")
+                                            break
+                                
+                                # Check for ModuleConfig response
+                                elif hasattr(admin_msg, "get_module_config_response"):
+                                    module_response = admin_msg.get_module_config_response
+                                    # Find which field is set
+                                    for field in module_response.DESCRIPTOR.fields:
+                                        if module_response.HasField(field.name):
+                                            section_data = getattr(module_response, field.name)
+                                            responses["module_config"][section_name] = section_data
+                                            logger.info(f"✓ Captured {section_name} from admin response")
+                                            successful_sections += 1
+                                            print(f"\r[{idx}/{total_sections}] Received {section_name} config ✓ ({elapsed:.1f}s)")
+                                            break
+                                else:
+                                    logger.warning(f"Admin response has no config data for {section_name}")
+                                    print(f"\r[{idx}/{total_sections}] {section_name} - no config data ({elapsed:.1f}s)")
+                                    failed_sections.append(section_name)
+                            else:
+                                logger.warning(f"Timeout waiting for {section_name}")
+                                print(f"\r[{idx}/{total_sections}] {section_name} - timeout ({elapsed:.1f}s)")
+                                failed_sections.append(section_name)
+                                
+                        except Exception as e:
+                            elapsed = time.time() - start_time
+                            logger.error(f"Error retrieving {section_name}: {e}")
+                            print(f"\r[{idx}/{total_sections}] {section_name} - error ({elapsed:.1f}s)")
+                            failed_sections.append(section_name)
+                    
+                    # Summary
+                    print(f"\n  Retrieved {successful_sections}/{total_sections} config sections")
+                    if failed_sections:
+                        print(f"  Failed: {', '.join(failed_sections)}")
                     
                     # Get firmware from captured response
                     firmware_version = responses["firmware_version"]
