@@ -177,9 +177,12 @@ def discover(db: str, ports: tuple[str, ...], verbose: bool, network: bool):
             if isinstance(result, Node):
                 port_map[result.id] = port
                 discovered.append(result)
+                # Check if this is a new or existing node
+                is_new = result.id not in existing_node_ids
+                status_text = "[cyan](new)[/cyan]" if is_new else "[dim](already known)[/dim]"
                 console.print(
                     f"  [green]✓[/green] {port} → [bold]{result.short_name}[/bold] "
-                    f"({result.hw_model})"
+                    f"({result.hw_model}) {status_text}"
                 )
             elif verbose:
                 # Only show failures in verbose mode
@@ -189,6 +192,11 @@ def discover(db: str, ports: tuple[str, ...], verbose: bool, network: bool):
                     error_msg = "No response"
                 console.print(f"  [dim]✗ {port} → {error_msg}[/dim]")
 
+        # Track which nodes are new vs already known
+        async with AsyncDatabase(db) as database:
+            await database.initialize()
+            existing_node_ids = {n.id for n in await database.get_all_nodes(active_only=False)}
+        
         # Discover serial nodes with progress callback
         if port_list:
             nodes = await manager.discover_nodes(
@@ -612,6 +620,12 @@ def sync(db: str, port: str | None):
             for node, serial_port in connected_nodes:
                 console.print(f"Syncing from {node.short_name} ({serial_port})...")
                 try:
+                    # First, refresh the managed node's config
+                    refreshed_node = await manager.connect_to_node(serial_port)
+                    await database.save_node(refreshed_node)
+                    console.print(f"  [dim]→ Refreshed config for {node.short_name}[/dim]")
+                    
+                    # Then import heard nodes
                     heard_nodes, heard_history = await manager.import_heard_nodes(
                         serial_port, node.id
                     )
