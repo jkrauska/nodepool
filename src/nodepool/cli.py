@@ -118,6 +118,9 @@ def discover(db: str, ports: tuple[str, ...], verbose: bool):
             await database.initialize()
 
             total_heard = 0
+            total_new = 0
+            total_updated = 0
+
             for node in nodes:
                 await database.save_node(node)
 
@@ -129,21 +132,49 @@ def discover(db: str, ports: tuple[str, ...], verbose: bool):
                             node.serial_port, node.id
                         )
 
-                        # Save heard nodes and history
+                        # Track new vs updated nodes
+                        new_nodes = []
+                        updated_nodes = []
+
+                        # Check which nodes are new
                         for heard_node in heard_nodes:
+                            existing = await database.get_node(heard_node.id)
+                            if existing is None:
+                                new_nodes.append(heard_node)
+                            else:
+                                updated_nodes.append(heard_node)
+
+                            # Save the node (insert or update)
                             await database.save_node(heard_node)
 
+                        # Save heard history
                         for history in heard_history:
                             await database.save_heard_history(history)
 
                         total_heard += len(heard_nodes)
-                        console.print(f"  → Imported {len(heard_nodes)} heard node(s)")
+                        total_new += len(new_nodes)
+                        total_updated += len(updated_nodes)
+
+                        # Display results for this managed node
+                        console.print(f"  [green]✓[/green] Imported {len(heard_nodes)} heard node(s)")
+                        if new_nodes:
+                            new_names = ", ".join(n.short_name for n in new_nodes[:5])
+                            if len(new_nodes) > 5:
+                                new_names += f", ... (+{len(new_nodes) - 5} more)"
+                            console.print(f"    - {len(new_nodes)} new: {new_names}")
+                        if updated_nodes:
+                            console.print(f"    - {len(updated_nodes)} updated")
+
                     except Exception as e:
                         console.print(f"  [yellow]Warning: Could not import heard nodes: {e}[/yellow]")
 
         console.print(f"[green]Successfully saved {len(nodes)} managed node(s) to database.[/green]")
         if total_heard > 0:
             console.print(f"[green]Imported {total_heard} heard node(s) from the mesh.[/green]")
+            if total_new > 0:
+                console.print(f"  [cyan]→ {total_new} new node(s)[/cyan]")
+            if total_updated > 0:
+                console.print(f"  [dim]→ {total_updated} updated node(s)[/dim]")
 
     run_async(_discover())
 
