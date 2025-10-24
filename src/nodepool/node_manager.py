@@ -247,7 +247,22 @@ class NodeManager:
             node_id = user.get("id", "unknown")
             short_name = user.get("shortName", "UNKNOWN")
             long_name = user.get("longName", "Unknown Node")
-            hw_model = user.get("hwModel", "UNKNOWN")
+            
+            # Try to get hardware model from myInfo first (more reliable), then fall back to user dict
+            hw_model = None
+            if hasattr(my_info, 'hw_model_string'):
+                hw_model = my_info.hw_model_string
+            elif hasattr(my_info, 'hw_model'):
+                # hw_model is an enum, try to convert to string
+                try:
+                    from meshtastic import hardware
+                    hw_model = hardware.Models(my_info.hw_model).name
+                except (ImportError, ValueError, AttributeError):
+                    pass
+            
+            # Fallback to user dict if we couldn't get it from myInfo
+            if not hw_model:
+                hw_model = user.get("hwModel", "UNKNOWN")
 
             # Get firmware version
             firmware_version = None
