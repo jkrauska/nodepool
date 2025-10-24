@@ -945,10 +945,38 @@ class NodeManager:
         # Process ModuleConfig sections
         for section_name, section_data in responses.get("module_config", {}).items():
             # Convert protobuf message to dict (handles nested objects)
+            print(f"\n[BUILD_CONFIG] Converting {section_name} protobuf to dict...")
+            print(f"  Protobuf type: {type(section_data)}")
+            print(f"  Protobuf str(): {str(section_data)[:200]}")
+            
+            # Check each field's actual value
+            print(f"  Field values:")
+            for field in section_data.DESCRIPTOR.fields:
+                val = getattr(section_data, field.name, None)
+                print(f"    {field.name}: {val} (type: {type(val).__name__})")
+            
             section_dict = MessageToDict(
                 section_data,
                 preserving_proto_field_name=True
             )
+            
+            print(f"  MessageToDict result: {section_dict}")
+            
+            # If MessageToDict returns empty, manually extract non-default fields
+            if not section_dict:
+                print(f"  MessageToDict returned empty! Manually extracting fields...")
+                section_dict = {}
+                for field in section_data.DESCRIPTOR.fields:
+                    val = getattr(section_data, field.name)
+                    # Skip default/empty values
+                    if val not in (None, "", 0, False, b'', []):
+                        if hasattr(val, 'DESCRIPTOR'):  # Nested message
+                            nested_dict = MessageToDict(val, preserving_proto_field_name=True)
+                            if nested_dict:  # Only include if not empty
+                                section_dict[field.name] = nested_dict
+                        else:
+                            section_dict[field.name] = val
+                print(f"  Manual extraction result: {section_dict}")
             
             # Add metadata
             section_dict["_status"] = "loaded"
