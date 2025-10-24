@@ -411,8 +411,8 @@ class NodeManager:
                         }
 
                 # Extract security config (modern API)
-                if hasattr(local_config, "security"):
-                    security = local_config.security
+                if hasattr(local_node, "localConfig") and hasattr(local_node.localConfig, "security"):
+                    security = local_node.localConfig.security
                     # Store admin_key as hex string (it's a bytes field)
                     admin_key_bytes = getattr(security, "admin_key", b"")
                     public_key_bytes = getattr(security, "public_key", b"")
@@ -477,9 +477,9 @@ class NodeManager:
                             }
                         )
                 
-                # Extract position config (in localConfig, not moduleConfig)
-                if hasattr(local_config, "position"):
-                    position = local_config.position
+                # Extract position config (in localConfig, not moduleConfig) - modern API
+                if hasattr(local_node, "localConfig") and hasattr(local_node.localConfig, "position"):
+                    position = local_node.localConfig.position
                     config["position"] = {
                         "position_broadcast_secs": getattr(position, "position_broadcast_secs", 0),
                         "position_broadcast_smart_enabled": getattr(position, "position_broadcast_smart_enabled", False),
