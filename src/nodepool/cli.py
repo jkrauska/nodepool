@@ -259,23 +259,68 @@ def remote_verify(target_node_id: str, via_node_id: str, db: str, timeout: int):
     help="Number of retry attempts",
     type=int,
 )
-@click.option(
-    "--sections",
-    multiple=True,
-    help="Specific config sections to retrieve (can specify multiple). Options: device, position, power, network, display, lora, bluetooth, mqtt, serial, telemetry",
-)
-def remote_config(target_node_id: str, via_node_id: str, db: str, timeout: int, retries: int, sections: tuple[str, ...]):
+@click.option("--only-device", is_flag=True, help="Retrieve only device config")
+@click.option("--only-position", is_flag=True, help="Retrieve only position config")
+@click.option("--only-power", is_flag=True, help="Retrieve only power config")
+@click.option("--only-network", is_flag=True, help="Retrieve only network config")
+@click.option("--only-display", is_flag=True, help="Retrieve only display config")
+@click.option("--only-lora", is_flag=True, help="Retrieve only lora config")
+@click.option("--only-bluetooth", is_flag=True, help="Retrieve only bluetooth config")
+@click.option("--only-mqtt", is_flag=True, help="Retrieve only mqtt config")
+@click.option("--only-serial", is_flag=True, help="Retrieve only serial config")
+@click.option("--only-telemetry", is_flag=True, help="Retrieve only telemetry config")
+def remote_config(
+    target_node_id: str, 
+    via_node_id: str, 
+    db: str, 
+    timeout: int, 
+    retries: int,
+    only_device: bool,
+    only_position: bool,
+    only_power: bool,
+    only_network: bool,
+    only_display: bool,
+    only_lora: bool,
+    only_bluetooth: bool,
+    only_mqtt: bool,
+    only_serial: bool,
+    only_telemetry: bool,
+):
     """Get configuration from remote node over the mesh.
     
     Retrieves config from TARGET_NODE_ID via VIA_NODE_ID using PKI admin auth.
     
-    By default, retrieves all config sections. Use --sections to retrieve specific sections only.
+    By default, retrieves all config sections. Use --only-X flags to retrieve specific sections.
     
     Examples:
       nodepool remote config 29f35f73 --via 3c7f9d4e
       nodepool remote config !29f35f73 --via !3c7f9d4e --timeout 60
-      nodepool remote config 29f35f73 --via 3c7f9d4e --sections mqtt --sections telemetry
+      nodepool remote config 29f35f73 --via 3c7f9d4e --only-mqtt
+      nodepool remote config 29f35f73 --via 3c7f9d4e --only-lora
     """
+    # Build sections list from flags
+    sections = []
+    if only_device:
+        sections.append("device")
+    if only_position:
+        sections.append("position")
+    if only_power:
+        sections.append("power")
+    if only_network:
+        sections.append("network")
+    if only_display:
+        sections.append("display")
+    if only_lora:
+        sections.append("lora")
+    if only_bluetooth:
+        sections.append("bluetooth")
+    if only_mqtt:
+        sections.append("mqtt")
+    if only_serial:
+        sections.append("serial")
+    if only_telemetry:
+        sections.append("telemetry")
+    
     # Normalize node IDs
     if not target_node_id.startswith("!"):
         target_node_id = f"!{target_node_id}"
@@ -315,7 +360,7 @@ def remote_config(target_node_id: str, via_node_id: str, db: str, timeout: int, 
                     target_node_id,
                     timeout=timeout,
                     retries=retries,
-                    sections=list(sections) if sections else None
+                    sections=sections if sections else None
                 )
                 
                 console.print(f"[green]✓ Retrieved config from {node.short_name}[/green]\n")
