@@ -44,27 +44,45 @@ class MeshViewAPIClient:
                 response.raise_for_status()
                 data = await response.json()
 
-        if not isinstance(data, list):
-            raise ValueError(f"Expected list of nodes, got {type(data)}")
+        # Handle both direct list and {"nodes": [...]} format
+        if isinstance(data, dict):
+            if "nodes" in data:
+                node_list = data["nodes"]
+            else:
+                raise ValueError(f"Expected 'nodes' key in response, got keys: {list(data.keys())}")
+        elif isinstance(data, list):
+            node_list = data
+        else:
+            raise ValueError(f"Expected list or dict with 'nodes', got {type(data)}")
 
         nodes = []
         heard_history = []
         now = datetime.now(timezone.utc)
 
-        for node_data in data:
+        for node_data in node_list:
             try:
                 node = self._parse_node(node_data, now)
                 nodes.append(node)
 
                 # Create heard history entry
+                # Convert position from microdegrees if present
+                lat = node_data.get("last_lat") or node_data.get("latitude")
+                lon = node_data.get("last_long") or node_data.get("longitude")
+                
+                # Convert from microdegrees to degrees if needed (values > 180 are likely microdegrees)
+                if lat is not None and abs(lat) > 180:
+                    lat = lat / 1e7
+                if lon is not None and abs(lon) > 180:
+                    lon = lon / 1e7
+                
                 history = HeardHistory(
                     node_id=node.id,
                     seen_by="meshviewAPI",
                     timestamp=node.last_seen,
                     snr=node.snr,
                     hops_away=node.hops_away,
-                    position_lat=node_data.get("latitude"),
-                    position_lon=node_data.get("longitude"),
+                    position_lat=lat,
+                    position_lon=lon,
                 )
                 heard_history.append(history)
 
@@ -100,8 +118,8 @@ class MeshViewAPIClient:
         short_name = data.get("short_name") or data.get("shortName") or "Unknown"
         long_name = data.get("long_name") or data.get("longName") or short_name
 
-        # Parse timestamp
-        last_seen_str = data.get("last_seen") or data.get("lastSeen")
+        # Parse timestamp (try multiple field names)
+        last_seen_str = data.get("last_update") or data.get("last_seen") or data.get("lastSeen")
         if last_seen_str:
             try:
                 # Try parsing ISO format
@@ -117,7 +135,7 @@ class MeshViewAPIClient:
 
         # Extract optional fields
         hw_model = data.get("hw_model") or data.get("hwModel")
-        firmware_version = data.get("firmware_version") or data.get("firmwareVersion")
+        firmware_version = data.get("firmware") or data.get("firmware_version") or data.get("firmwareVersion")
         snr = data.get("snr")
         hops_away = data.get("hops_away") or data.get("hopsAway")
 

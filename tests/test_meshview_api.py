@@ -135,7 +135,7 @@ class TestMeshViewAPIClient:
             mock_response.json = AsyncMock(return_value={"error": "not a list"})
             mock_get.return_value.__aenter__.return_value = mock_response
 
-            with pytest.raises(ValueError, match="Expected list of nodes"):
+            with pytest.raises(ValueError, match="Expected 'nodes' key in response"):
                 await api_client.fetch_nodes(days_active=3)
 
     async def test_fetch_nodes_network_error(self, api_client):
