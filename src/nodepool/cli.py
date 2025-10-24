@@ -466,8 +466,7 @@ def info(node_id: str, db: str):
                     pub_key = security['public_key']
                     console.print(f"    Public Key: {pub_key[:16]}... ({len(pub_key)//2} bytes)")
                 if security.get('private_key'):
-                    priv_key = security['private_key']
-                    console.print(f"    Private Key: {priv_key[:16]}... ({len(priv_key)//2} bytes)")
+                    console.print(f"    Private Key: XXXXX--PRIVATE-KEY--XXXXX (hidden)")
                 
                 console.print(f"    Serial Enabled: {security.get('serial_enabled', 'Unknown')}")
                 console.print(f"    Admin Channel Enabled: {security.get('admin_channel_enabled', False)}")
