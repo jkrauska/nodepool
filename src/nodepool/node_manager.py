@@ -65,9 +65,11 @@ class MessageResponseHandler:
                         if decoded.portnum == portnums_pb2.PortNum.ROUTING_APP:
                             if request_id and request_id in self.packet_ids:
                                 logger.info(f"[INTERCEPT] Captured ACK for packet {request_id}")
+                                # Get from field (protobuf uses 'from' but Python accesses as getattr)
+                                from_field = getattr(packet, 'from', 0) or getattr(packet, 'from_field', 0)
                                 self.ack_queue.put({
                                     "packet_id": request_id,
-                                    "from_id": f"!{packet.from_field:08x}" if packet.from_field else "unknown",
+                                    "from_id": f"!{from_field:08x}" if from_field else "unknown",
                                     "timestamp": packet.rx_time if packet.rx_time else None,
                                 })
                         
@@ -80,14 +82,19 @@ class MessageResponseHandler:
                                     admin_msg = admin_pb2.AdminMessage()
                                     admin_msg.ParseFromString(decoded.payload)
                                     
+                                    # Get from field (protobuf uses 'from' but Python accesses as getattr)
+                                    from_field = getattr(packet, 'from', 0) or getattr(packet, 'from_field', 0)
+                                    
                                     self.admin_responses.put({
                                         "packet_id": request_id,
-                                        "from_id": f"!{packet.from_field:08x}" if packet.from_field else "unknown",
+                                        "from_id": f"!{from_field:08x}" if from_field else "unknown",
                                         "admin_message": admin_msg,
                                         "timestamp": packet.rx_time if packet.rx_time else None,
                                     })
                                 except Exception as e:
                                     logger.warning(f"Failed to decode admin message: {e}")
+                                    import traceback
+                                    logger.debug(traceback.format_exc())
                         
                         # Queue all packets for inspection
                         self.response_queue.put({
