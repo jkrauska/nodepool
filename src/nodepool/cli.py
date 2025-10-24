@@ -83,6 +83,8 @@ def remote_verify(target_node_id: str, via_node_id: str, db: str, timeout: int):
         via_node_id = f"!{via_node_id}"
     
     async def _remote_verify():
+        import base64
+        
         async with AsyncDatabase(db) as database:
             await database.initialize()
             
@@ -101,10 +103,20 @@ def remote_verify(target_node_id: str, via_node_id: str, db: str, timeout: int):
             # Get target node (if we know about it)
             target_node = await database.get_node(target_node_id)
             target_name = target_node.short_name if target_node else target_node_id
+            
+            # Get via node's public key
+            via_public_key = None
+            if via_node.config and "security" in via_node.config:
+                pub_key_hex = via_node.config["security"].get("public_key")
+                if pub_key_hex:
+                    pub_key_bytes = bytes.fromhex(pub_key_hex)
+                    via_public_key = base64.b64encode(pub_key_bytes).decode('ascii')
         
         console.print(f"\n[bold blue]Verifying admin access...[/bold blue]")
         console.print(f"  Via: {via_node.short_name} ({via_connection})")
         console.print(f"  Target: {target_name}")
+        if via_public_key:
+            console.print(f"  Using key: {via_public_key}")
         console.print(f"  Timeout: {timeout}s\n")
         
         manager = NodeManager()
