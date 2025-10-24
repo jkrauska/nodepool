@@ -1637,8 +1637,13 @@ class NodeManager:
                         ("telemetry", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["telemetry"]),
                     ]
                     
-                    # Combine all sections for progress tracking
-                    all_sections = config_sections + module_sections
+                    # Track sections with their type (LocalConfig vs ModuleConfig)
+                    all_sections = []
+                    for name, field in config_sections:
+                        all_sections.append((name, field, "LocalConfig"))
+                    for name, field in module_sections:
+                        all_sections.append((name, field, "ModuleConfig"))
+                    
                     total_sections = len(all_sections)
                     successful_sections = 0
                     failed_sections = []
@@ -1646,23 +1651,32 @@ class NodeManager:
                     print(f"\n  Retrieving {total_sections} config sections...")
                     
                     # Request each section with retry logic
-                    for idx, (section_name, section_field) in enumerate(all_sections, 1):
+                    for idx, (section_name, section_field, config_type) in enumerate(all_sections, 1):
                         section_success = False
                         
                         for attempt in range(1, 4):  # Attempts 1, 2, 3
                             try:
                                 # Show request with attempt number
-                                print(f"[{idx}/{total_sections}] Requesting {section_name} config... (attempt {attempt})", end="", flush=True)
-                                
-                                # Debug: Show what index we're requesting
-                                logger.info(f"Requesting {section_name} - field index: {section_field.index}, field name: {section_field.name}")
-                                print(f" [index={section_field.index}]", end="", flush=True)
+                                type_label = "LocalConfig" if config_type == "LocalConfig" else "ModuleConfig"
+                                print(f"[{idx}/{total_sections}] Requesting {section_name} ({type_label})... (attempt {attempt})", end="", flush=True)
                                 
                                 # Time the request
                                 start_time = time.time()
                                 
-                                # DON'T suppress output - we need to see what's happening
-                                remote_node.requestConfig(section_field)
+                                # Create admin message with correct request type
+                                from meshtastic import admin_pb2
+                                p = admin_pb2.AdminMessage()
+                                
+                                # Use correct request type based on config_type
+                                if config_type == "LocalConfig":
+                                    p.get_config_request = section_field.index
+                                    logger.info(f"Sending get_config_request for {section_name} (index {section_field.index})")
+                                else:
+                                    p.get_module_config_request = section_field.index
+                                    logger.info(f"Sending get_module_config_request for {section_name} (index {section_field.index})")
+                                
+                                # Send the admin message directly
+                                remote_node._sendAdmin(p, wantResponse=True, onResponse=remote_node.onResponseRequestSettings)
                                 interface.waitForAckNak()
                                 
                                 elapsed = time.time() - start_time
