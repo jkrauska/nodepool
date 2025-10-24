@@ -1472,77 +1472,32 @@ class NodeManager:
             if not public_key_bytes:
                 logger.warning("No public key found - attempting without PKI authentication")
             
-            # Install stream interceptor to capture admin responses
-            handler = MessageResponseHandler(interface)
-            
-            # Request device metadata (includes firmware version)
+            # Request device metadata using the library's official method
             logger.info(f"Requesting device metadata from {target_node_id}")
-            print(f"Sending get_device_metadata_request to {target_node_id}...")
+            print(f"Requesting device metadata from {target_node_id}...")
             
             for attempt in range(retries + 1):
                 try:
-                    # Build admin message with PKI auth
-                    pki_msg = admin_pb2.AdminMessage()
-                    if public_key_bytes:
-                        pki_msg.session_passkey = public_key_bytes
-                    pki_msg.get_device_metadata_request = True
+                    # Get the remote node object (this is how the official CLI does it)
+                    remote_node = interface.getNode(target_node_id, requestChannelAttempts=0)
                     
-                    # Send request
-                    packet = interface.sendData(
-                        pki_msg.SerializeToString(),
-                        destinationId=target_node_id,
-                        portNum=portnums_pb2.PortNum.ADMIN_APP,
-                        wantAck=False,  # ACKs don't work over mesh for admin
-                        wantResponse=True  # We want a response
-                    )
+                    # Call getMetadata() on the node object (like official CLI)
+                    print(f"  Attempt {attempt + 1}/{retries + 1}: Calling getMetadata()...")
+                    remote_node.getMetadata()
                     
-                    # Extract packet ID
-                    if isinstance(packet, int):
-                        packet_id = packet
-                    else:
-                        packet_id = getattr(packet, "id", None)
-                        if packet_id is None:
-                            raise ValueError("Could not extract packet ID")
+                    print(f"  ✓ Metadata request completed")
                     
-                    # Register packet for tracking
-                    handler.register_packet(packet_id)
-                    
-                    logger.info(f"Metadata request sent (packet {packet_id}), attempt {attempt + 1}/{retries + 1}")
-                    print(f"  Attempt {attempt + 1}/{retries + 1}: Packet {packet_id} sent, waiting for response...")
-                    
-                    # Wait for admin response using stream interceptor
-                    response = handler.wait_for_admin_response(packet_id, timeout)
-                    
+                    # Check if the interface's metadata was updated
                     firmware_version = None
                     hw_model = user.get("hwModel")
                     
-                    if response:
-                        print(f"  ✓ Received admin response from {response['from_id']}")
-                        logger.info(f"Captured admin response for packet {packet_id}")
-                        
-                        # Extract firmware version from device metadata response
-                        admin_msg = response.get("admin_message")
-                        if admin_msg and admin_msg.HasField("get_device_metadata_response"):
-                            metadata = admin_msg.get_device_metadata_response
-                            firmware_version = getattr(metadata, "firmware_version", None)
-                            if firmware_version:
-                                print(f"  ✓ Firmware version: {firmware_version}")
-                                logger.info(f"Extracted firmware version: {firmware_version}")
-                            
-                            # Also get hardware model if available
-                            hw_model_enum = getattr(metadata, "hw_model", None)
-                            if hw_model_enum:
-                                try:
-                                    from meshtastic import hardware
-                                    hw_model = hardware.Models(hw_model_enum).name
-                                except (ImportError, ValueError, AttributeError):
-                                    pass
-                        else:
-                            print(f"  ⚠ Response doesn't contain device metadata")
+                    # Try to get firmware from interface.metadata
+                    if hasattr(interface, "metadata") and hasattr(interface.metadata, "firmware_version"):
+                        firmware_version = interface.metadata.firmware_version
+                        print(f"  ✓ Firmware version: {firmware_version}")
+                        logger.info(f"Retrieved firmware version: {firmware_version}")
                     else:
-                        print(f"  ⚠ No response received within {timeout}s")
-                        if attempt < retries:
-                            continue  # Try again
+                        print(f"  ⚠ Firmware version not available in metadata")
                     
                     # Check if target node data was updated
                     current_target_data = interface.nodes.get(target_node_id, {})
