@@ -221,7 +221,7 @@ def list(db: str, show_all: bool, connected_only: bool, heard_only: bool):
             table.add_column("SNR", style="yellow")
             table.add_column("Hops", style="blue")
         else:
-            table.add_column("Serial Port", style="yellow")
+            table.add_column("Connection Method", style="yellow")
 
         table.add_column("Status", style="white")
 
@@ -291,7 +291,7 @@ def info(node_id: str, db: str):
         console.print(f"  Long Name: {node.long_name}")
         console.print(f"  Hardware: {node.hw_model or 'Unknown'}")
         console.print(f"  Firmware: {node.firmware_version or 'Unknown'}")
-        console.print(f"  Serial Port: {serial_port or 'Not connected'}")
+        console.print(f"  Connection: {serial_port or 'Not connected'}")
         console.print(f"  Last Seen: {node.last_seen}")
         console.print(f"  Status: {'Active' if node.is_active else 'Inactive'}")
 
@@ -427,17 +427,17 @@ def status(db: str):
 
         table = Table(title="Node Status")
         table.add_column("Node", style="cyan", no_wrap=True)
-        table.add_column("Serial Port", style="yellow")
+        table.add_column("Connection Method", style="yellow")
         table.add_column("Status", style="white")
         table.add_column("Error", style="red")
 
-        for status, serial_port in statuses:
+        for status, connection_string in statuses:
             reachable_text = "✓ Reachable" if status.reachable else "✗ Unreachable"
             reachable_style = "green" if status.reachable else "red"
 
             table.add_row(
                 f"{status.node.short_name} ({status.node.id})",
-                serial_port,
+                connection_string,
                 f"[{reachable_style}]{reachable_text}[/{reachable_style}]",
                 status.error or "",
             )
@@ -624,12 +624,12 @@ def export(db: str, output: str | None, output_format: str):
             # Build export data with connection info
             nodes_data = []
             for node in nodes:
-                serial_port = await database.get_connection(node.id)
+                connection_string = await database.get_connection(node.id)
                 nodes_data.append({
                     "id": node.id,
                     "short_name": node.short_name,
                     "long_name": node.long_name,
-                    "serial_port": serial_port,
+                    "connection_string": connection_string,
                     "hw_model": node.hw_model,
                     "firmware_version": node.firmware_version,
                     "last_seen": node.last_seen.isoformat(),

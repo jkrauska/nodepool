@@ -64,7 +64,7 @@ class AsyncDatabase:
 
             CREATE TABLE IF NOT EXISTS connections (
                 node_id TEXT PRIMARY KEY,
-                serial_port TEXT NOT NULL,
+                connection_string TEXT NOT NULL,
                 connected_at TEXT NOT NULL,
                 FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
             );
@@ -395,39 +395,39 @@ class AsyncDatabase:
 
         return self._row_to_pool(row)
 
-    async def save_connection(self, node_id: str, serial_port: str) -> None:
-        """Save a node connection (managed node with serial port).
+    async def save_connection(self, node_id: str, connection_string: str) -> None:
+        """Save a node connection.
 
         Args:
             node_id: Node ID
-            serial_port: Serial port path
+            connection_string: Connection string (e.g., /dev/cu.usbmodem123, tcp://192.168.1.100:4403)
         """
         if not self._conn:
             await self.connect()
 
         await self._conn.execute(
             """
-            INSERT INTO connections (node_id, serial_port, connected_at)
+            INSERT INTO connections (node_id, connection_string, connected_at)
             VALUES (?, ?, ?)
             ON CONFLICT(node_id) DO UPDATE SET
-                serial_port = excluded.serial_port,
+                connection_string = excluded.connection_string,
                 connected_at = excluded.connected_at
             """,
-            (node_id, serial_port, datetime.now().isoformat()),
+            (node_id, connection_string, datetime.now().isoformat()),
         )
         await self._conn.commit()
 
     async def get_connected_nodes(self) -> list[tuple[Node, str]]:
-        """Get all connected (managed) nodes with their serial ports.
+        """Get all connected nodes with their connection strings.
 
         Returns:
-            List of tuples (Node, serial_port)
+            List of tuples (Node, connection_string)
         """
         if not self._conn:
             await self.connect()
 
         query = """
-            SELECT n.*, c.serial_port
+            SELECT n.*, c.connection_string
             FROM nodes n
             JOIN connections c ON n.id = c.node_id
             WHERE n.is_active = 1
@@ -440,8 +440,8 @@ class AsyncDatabase:
         result = []
         for row in rows:
             node = self._row_to_node(row)
-            serial_port = row["serial_port"]
-            result.append((node, serial_port))
+            connection_string = row["connection_string"]
+            result.append((node, connection_string))
 
         return result
 
@@ -526,23 +526,23 @@ class AsyncDatabase:
         return [self._row_to_node(row) for row in rows]
 
     async def get_connection(self, node_id: str) -> str | None:
-        """Get serial port connection for a node.
+        """Get connection string for a node.
 
         Args:
             node_id: Node ID
 
         Returns:
-            Serial port or None if not connected
+            Connection string or None if not connected
         """
         if not self._conn:
             await self.connect()
 
         cursor = await self._conn.execute(
-            "SELECT serial_port FROM connections WHERE node_id = ?",
+            "SELECT connection_string FROM connections WHERE node_id = ?",
             (node_id,),
         )
         row = await cursor.fetchone()
-        return row["serial_port"] if row else None
+        return row["connection_string"] if row else None
 
     def _row_to_node(self, row: aiosqlite.Row) -> Node:
         """Convert database row to Node object.
