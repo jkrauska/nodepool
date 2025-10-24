@@ -910,6 +910,52 @@ class NodeManager:
             logger.warning(f"Failed to extract full config: {e}")
 
         return config
+    
+    def _build_config_from_responses(self, responses: dict) -> dict[str, Any]:
+        """Build config dict from captured protobuf responses with metadata.
+        
+        Converts protobuf config sections to dict format and adds metadata
+        fields (_status, _retrieved_at) for tracking.
+        
+        Args:
+            responses: Dict with 'config' and 'module_config' keys containing protobufs
+            
+        Returns:
+            Config dictionary suitable for Node.config field
+        """
+        config: dict[str, Any] = {}
+        current_time = datetime.now().isoformat()
+        
+        # Process LocalConfig sections
+        for section_name, section_data in responses.get("config", {}).items():
+            config[section_name] = {
+                "_status": "loaded",
+                "_retrieved_at": current_time,
+            }
+            # Iterate through protobuf fields
+            for field in section_data.DESCRIPTOR.fields:
+                field_value = getattr(section_data, field.name, None)
+                if field_value is not None:
+                    # Convert to appropriate Python type
+                    if isinstance(field_value, bytes):
+                        field_value = field_value.hex()
+                    config[section_name][field.name] = field_value
+        
+        # Process ModuleConfig sections
+        for section_name, section_data in responses.get("module_config", {}).items():
+            config[section_name] = {
+                "_status": "loaded",
+                "_retrieved_at": current_time,
+            }
+            for field in section_data.DESCRIPTOR.fields:
+                field_value = getattr(section_data, field.name, None)
+                if field_value is not None:
+                    # Convert to appropriate Python type
+                    if isinstance(field_value, bytes):
+                        field_value = field_value.hex()
+                    config[section_name][field.name] = field_value
+        
+        return config
 
     async def check_node_reachability(self, node: Node, serial_port: str | None = None) -> NodeStatus:
         """Check if a node is reachable.
@@ -1472,8 +1518,13 @@ class NodeManager:
             if not public_key_bytes:
                 logger.warning("No public key found - attempting without PKI authentication")
             
-            # Store metadata response in closure
-            metadata_response = {"firmware_version": None, "hw_model": None}
+            # Store responses in closure
+            responses = {
+                "firmware_version": None,
+                "hw_model": None,
+                "config": {},
+                "module_config": {}
+            }
             
             def capture_metadata_response(packet):
                 """Capture metadata from response packet."""
@@ -1484,17 +1535,52 @@ class NodeManager:
                             admin_data = decoded.get("admin", {}).get("raw", None)
                             if admin_data and hasattr(admin_data, "get_device_metadata_response"):
                                 response = admin_data.get_device_metadata_response
-                                metadata_response["firmware_version"] = getattr(response, "firmware_version", None)
+                                responses["firmware_version"] = getattr(response, "firmware_version", None)
                                 hw_model_enum = getattr(response, "hw_model", None)
                                 if hw_model_enum:
                                     try:
                                         from meshtastic import hardware
-                                        metadata_response["hw_model"] = hardware.Models(hw_model_enum).name
+                                        responses["hw_model"] = hardware.Models(hw_model_enum).name
                                     except (ImportError, ValueError, AttributeError):
                                         pass
-                                logger.info(f"Captured firmware: {metadata_response['firmware_version']}")
+                                logger.info(f"Captured firmware: {responses['firmware_version']}")
                 except Exception as e:
                     logger.error(f"Error capturing metadata: {e}")
+            
+            def capture_config_response(packet):
+                """Capture config from response packet."""
+                try:
+                    if "decoded" in packet:
+                        decoded = packet["decoded"]
+                        if decoded.get("portnum") == portnums_pb2.PortNum.Name(portnums_pb2.PortNum.ADMIN_APP):
+                            admin_data = decoded.get("admin", {}).get("raw", None)
+                            if not admin_data:
+                                return
+                            
+                            # Check for config responses
+                            if hasattr(admin_data, "get_config_response"):
+                                config_response = admin_data.get_config_response
+                                # Determine which config section this is
+                                for field in config_response.DESCRIPTOR.fields:
+                                    if config_response.HasField(field.name):
+                                        section_name = field.name
+                                        section_data = getattr(config_response, field.name)
+                                        responses["config"][section_name] = section_data
+                                        logger.info(f"Captured config section: {section_name}")
+                                        break
+                            
+                            # Check for module config responses
+                            elif hasattr(admin_data, "get_module_config_response"):
+                                module_response = admin_data.get_module_config_response
+                                for field in module_response.DESCRIPTOR.fields:
+                                    if module_response.HasField(field.name):
+                                        section_name = field.name
+                                        section_data = getattr(module_response, field.name)
+                                        responses["module_config"][section_name] = section_data
+                                        logger.info(f"Captured module config section: {section_name}")
+                                        break
+                except Exception as e:
+                    logger.error(f"Error capturing config: {e}")
             
             # Request device metadata using the library's official method
             logger.info(f"Requesting device metadata from {target_node_id}")
@@ -1517,14 +1603,65 @@ class NodeManager:
                     remote_node.onRequestGetMetadata = wrapped_callback
                     
                     # Call getMetadata() on the node object (like official CLI)
-                    print(f"  Attempt {attempt + 1}/{retries + 1}: Calling getMetadata()...")
+                    print(f"  Attempt {attempt + 1}/{retries + 1}: Requesting metadata and full config...")
                     remote_node.getMetadata()
                     
                     print(f"  ✓ Metadata request completed")
                     
+                    # Now request all config sections
+                    from meshtastic.protobuf import config_pb2, module_config_pb2
+                    
+                    # Wrap config callback
+                    original_settings_callback = remote_node.onResponseRequestSettings
+                    
+                    def wrapped_settings_callback(packet):
+                        capture_config_response(packet)
+                        return original_settings_callback(packet)
+                    
+                    remote_node.onResponseRequestSettings = wrapped_settings_callback
+                    
+                    # Request all LocalConfig sections
+                    print(f"  Requesting local config sections...")
+                    config_sections = [
+                        ("device", config_pb2.Config.DESCRIPTOR.fields_by_name["device"]),
+                        ("position", config_pb2.Config.DESCRIPTOR.fields_by_name["position"]),
+                        ("power", config_pb2.Config.DESCRIPTOR.fields_by_name["power"]),
+                        ("network", config_pb2.Config.DESCRIPTOR.fields_by_name["network"]),
+                        ("display", config_pb2.Config.DESCRIPTOR.fields_by_name["display"]),
+                        ("lora", config_pb2.Config.DESCRIPTOR.fields_by_name["lora"]),
+                        ("bluetooth", config_pb2.Config.DESCRIPTOR.fields_by_name["bluetooth"]),
+                    ]
+                    
+                    for section_name, section_field in config_sections:
+                        try:
+                            print(f"    - {section_name}")
+                            remote_node.requestConfig(section_field)
+                            interface.waitForAckNak()
+                        except Exception as e:
+                            logger.warning(f"Failed to get {section_name} config: {e}")
+                    
+                    # Request all ModuleConfig sections  
+                    print(f"  Requesting module config sections...")
+                    module_sections = [
+                        ("mqtt", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["mqtt"]),
+                        ("serial", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["serial"]),
+                        ("telemetry", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["telemetry"]),
+                    ]
+                    
+                    for section_name, section_field in module_sections:
+                        try:
+                            print(f"    - {section_name}")
+                            remote_node.requestConfig(section_field)
+                            interface.waitForAckNak()
+                        except Exception as e:
+                            logger.warning(f"Failed to get {section_name} module config: {e}")
+                    
                     # Get firmware from captured response
-                    firmware_version = metadata_response["firmware_version"]
-                    hw_model = metadata_response["hw_model"] or user.get("hwModel")
+                    firmware_version = responses["firmware_version"]
+                    hw_model = responses["hw_model"] or user.get("hwModel")
+                    
+                    # Build full config from captured responses
+                    full_config = self._build_config_from_responses(responses)
                     
                     if firmware_version:
                         print(f"  ✓ Firmware version: {firmware_version}")
@@ -1535,18 +1672,18 @@ class NodeManager:
                     # Check if target node data was updated
                     current_target_data = interface.nodes.get(target_node_id, {})
                     
-                    # Create node with available data
+                    # Create node with available data including captured config
                     node = Node(
                         id=target_node_id,
                         short_name=user.get("shortName", "?"),
                         long_name=user.get("longName", "Unknown"),
                         hw_model=hw_model,
-                        firmware_version=firmware_version,  # Now populated from response!
+                        firmware_version=firmware_version,
                         last_seen=datetime.fromtimestamp(current_target_data.get("lastHeard", time.time())),
                         is_active=True,
                         snr=current_target_data.get("snr"),
                         hops_away=current_target_data.get("hopsAway"),
-                        config={},  # Basic metadata request doesn't include full config
+                        config=full_config,  # Use captured config with metadata
                     )
                     
                     logger.info(f"Metadata request completed for {target_node_id}")

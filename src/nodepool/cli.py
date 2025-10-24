@@ -827,17 +827,66 @@ def info(node_id: str, db: str):
 
         if node.config:
             console.print("\n[bold]Configuration:[/bold]")
-
+            
+            # Helper function to format time ago
+            def time_ago(timestamp_str: str) -> str:
+                """Format timestamp as relative time."""
+                from datetime import datetime
+                try:
+                    retrieved = datetime.fromisoformat(timestamp_str)
+                    now = datetime.now()
+                    delta = now - retrieved
+                    if delta.total_seconds() < 60:
+                        return "just now"
+                    elif delta.total_seconds() < 3600:
+                        mins = int(delta.total_seconds() / 60)
+                        return f"{mins}m ago"
+                    elif delta.total_seconds() < 86400:
+                        hours = int(delta.total_seconds() / 3600)
+                        return f"{hours}h ago"
+                    else:
+                        days = int(delta.total_seconds() / 86400)
+                        return f"{days}d ago"
+                except:
+                    return timestamp_str
+            
+            # Display each config section with metadata if available
+            config_sections_displayed = []
+            
+            # LoRa config
             if "lora" in node.config:
                 lora = node.config["lora"]
-                console.print("  LoRa:")
-                console.print(f"    Hop Limit: {lora.get('hopLimit', 'Not set')}")
-                console.print(f"    Region: {lora.get('region', 'Not set')}")
+                # Check if this is new format with metadata
+                if isinstance(lora, dict) and "_status" in lora:
+                    if lora["_status"] == "loaded":
+                        timestamp = time_ago(lora.get("_retrieved_at", ""))
+                        console.print(f"  LoRa [dim]({timestamp})[/dim]:")
+                        for key, value in lora.items():
+                            if not key.startswith("_"):  # Skip metadata fields
+                                console.print(f"    {key}: {value}")
+                        config_sections_displayed.append("lora")
+                else:
+                    # Old format without metadata
+                    console.print("  LoRa:")
+                    console.print(f"    Hop Limit: {lora.get('hopLimit', 'Not set')}")
+                    console.print(f"    Region: {lora.get('region', 'Not set')}")
+                    config_sections_displayed.append("lora")
 
+            # Device config
             if "device" in node.config:
                 device = node.config["device"]
-                console.print("  Device:")
-                console.print(f"    Role: {device.get('role', 'Not set')}")
+                if isinstance(device, dict) and "_status" in device:
+                    if device["_status"] == "loaded":
+                        timestamp = time_ago(device.get("_retrieved_at", ""))
+                        console.print(f"  Device [dim]({timestamp})[/dim]:")
+                        for key, value in device.items():
+                            if not key.startswith("_"):
+                                console.print(f"    {key}: {value}")
+                        config_sections_displayed.append("device")
+                else:
+                    console.print("  Device:")
+                    console.print(f"    Role: {device.get('role', 'Not set')}")
+                    config_sections_displayed.append("device")
 
             if "security" in node.config:
                 import base64
