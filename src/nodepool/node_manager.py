@@ -1710,8 +1710,18 @@ class NodeManager:
                             else:
                                 p.get_module_config_request = section_field.index
                             
-                            # Send request and get packet ID
-                            packet_id = remote_node._sendAdmin(p, wantResponse=True, onResponse=remote_node.onResponseRequestSettings)
+                            # Send request - returns MeshPacket object
+                            packet = remote_node._sendAdmin(p, wantResponse=True, onResponse=remote_node.onResponseRequestSettings)
+                            
+                            # Extract packet ID from MeshPacket
+                            if isinstance(packet, int):
+                                packet_id = packet
+                            else:
+                                packet_id = getattr(packet, "id", None)
+                                if packet_id is None:
+                                    raise ValueError("Could not extract packet ID from MeshPacket")
+                            
+                            logger.debug(f"Sent admin request for {section_name}, packet ID: {packet_id}")
                             
                             # Register packet for tracking
                             handler.register_packet(packet_id)
