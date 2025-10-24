@@ -947,9 +947,26 @@ class NodeManager:
             # Attach response handler
             interface.on_receive = on_receive
             
+            # Get the via node's public key to use as session_passkey
+            # Extract from the localNode's security config
+            public_key_bytes = None
+            if hasattr(interface, 'localNode') and interface.localNode:
+                local_node = interface.localNode
+                if hasattr(local_node, 'localConfig') and hasattr(local_node.localConfig, 'security'):
+                    security = local_node.localConfig.security
+                    public_key_bytes = getattr(security, 'public_key', None)
+            
+            if not public_key_bytes:
+                logger.error("Could not extract public key from via node")
+                interface.close()
+                raise ValueError("Via node has no public key configured")
+            
+            logger.info(f"Using public key as session passkey: {public_key_bytes.hex()[:32]}...")
+            
             # STEP 1: Request PKI admin access (begin_edit_settings)
             logger.info(f"Step 1: Requesting PKI admin access to {target_node_id}")
             pki_msg = admin_pb2.AdminMessage()
+            pki_msg.session_passkey = public_key_bytes  # Set session key!
             pki_msg.begin_edit_settings = True
             
             interface.sendData(
@@ -975,6 +992,7 @@ class NodeManager:
             # STEP 2: Send actual admin command to verify
             logger.info(f"Step 2: Sending get_owner request to verify admin access")
             admin_msg = admin_pb2.AdminMessage()
+            admin_msg.session_passkey = public_key_bytes  # Include session key in all admin messages!
             admin_msg.get_owner_request = True
             
             interface.sendData(
