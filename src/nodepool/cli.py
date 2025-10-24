@@ -456,17 +456,20 @@ def info(node_id: str, db: str):
     help="Expected LoRa region (e.g., US, EU_868)",
 )
 def check(db: str, ttl: int, region: str | None):
-    """Run configuration checks on all nodes."""
+    """Run configuration checks on managed nodes."""
     async def _check():
         async with AsyncDatabase(db) as database:
             await database.initialize()
-            nodes = await database.get_all_nodes()
+            # Only check managed nodes (those with connections)
+            connected_nodes = await database.get_connected_nodes()
+            nodes = [n for n, _ in connected_nodes]
 
         if not nodes:
-            console.print("[yellow]No nodes found in database.[/yellow]")
+            console.print("[yellow]No managed nodes found in database.[/yellow]")
+            console.print("Run [bold]nodepool discover[/bold] to add managed nodes.")
             return
 
-        console.print(f"[bold blue]Running configuration checks on {len(nodes)} node(s)...[/bold blue]\n")
+        console.print(f"[bold blue]Running configuration checks on {len(nodes)} managed node(s)...[/bold blue]\n")
 
         checker = ConfigChecker(expected_ttl=ttl, expected_region=region)
         all_checks = await checker.check_all_nodes(nodes)
