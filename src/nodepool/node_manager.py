@@ -1550,37 +1550,59 @@ class NodeManager:
             def capture_config_response(packet):
                 """Capture config from response packet."""
                 try:
+                    logger.debug(f"[CAPTURE] Callback triggered with packet type: {type(packet)}")
+                    logger.debug(f"[CAPTURE] Packet keys: {packet.keys() if isinstance(packet, dict) else 'not a dict'}")
+                    
                     if "decoded" in packet:
                         decoded = packet["decoded"]
+                        logger.debug(f"[CAPTURE] Decoded keys: {decoded.keys() if isinstance(decoded, dict) else 'not a dict'}")
+                        logger.debug(f"[CAPTURE] Portnum: {decoded.get('portnum')}")
+                        
                         if decoded.get("portnum") == portnums_pb2.PortNum.Name(portnums_pb2.PortNum.ADMIN_APP):
                             admin_data = decoded.get("admin", {}).get("raw", None)
+                            logger.debug(f"[CAPTURE] Admin data type: {type(admin_data)}")
+                            logger.debug(f"[CAPTURE] Admin data hasattr get_config_response: {hasattr(admin_data, 'get_config_response') if admin_data else False}")
+                            
                             if not admin_data:
+                                logger.warning("[CAPTURE] No admin data in packet")
                                 return
                             
                             # Check for config responses
                             if hasattr(admin_data, "get_config_response"):
                                 config_response = admin_data.get_config_response
+                                logger.info(f"[CAPTURE] Found get_config_response!")
                                 # Determine which config section this is
                                 for field in config_response.DESCRIPTOR.fields:
                                     if config_response.HasField(field.name):
                                         section_name = field.name
                                         section_data = getattr(config_response, field.name)
                                         responses["config"][section_name] = section_data
-                                        logger.info(f"Captured config section: {section_name}")
+                                        logger.info(f"[CAPTURE] ✓ Captured config section: {section_name}")
+                                        print(f"    [DEBUG] Captured {section_name} to responses dict")
                                         break
                             
                             # Check for module config responses
                             elif hasattr(admin_data, "get_module_config_response"):
                                 module_response = admin_data.get_module_config_response
+                                logger.info(f"[CAPTURE] Found get_module_config_response!")
                                 for field in module_response.DESCRIPTOR.fields:
                                     if module_response.HasField(field.name):
                                         section_name = field.name
                                         section_data = getattr(module_response, field.name)
                                         responses["module_config"][section_name] = section_data
-                                        logger.info(f"Captured module config section: {section_name}")
+                                        logger.info(f"[CAPTURE] ✓ Captured module config section: {section_name}")
+                                        print(f"    [DEBUG] Captured {section_name} to responses dict")
                                         break
+                            else:
+                                logger.warning(f"[CAPTURE] Admin data has no config response fields")
+                        else:
+                            logger.debug(f"[CAPTURE] Not an ADMIN_APP packet")
+                    else:
+                        logger.debug(f"[CAPTURE] No 'decoded' in packet")
                 except Exception as e:
-                    logger.error(f"Error capturing config: {e}")
+                    logger.error(f"[CAPTURE] Error capturing config: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
             
             # Request device metadata using the library's official method
             logger.info(f"Requesting device metadata from {target_node_id}")
