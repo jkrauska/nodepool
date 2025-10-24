@@ -923,13 +923,24 @@ class NodeManager:
             def on_receive(packet, interface_obj):
                 """Handle incoming packets."""
                 try:
-                    if 'decoded' in packet and packet['decoded'].get('portnum') == 'ADMIN_APP':
-                        # Check if this is from our target node
-                        from_id = packet.get('fromId', packet.get('from'))
-                        if from_id == target_node_id or f"!{from_id}" == target_node_id:
-                            logger.info(f"Received admin response from {from_id}")
-                            response_data['packet'] = packet
-                            response_received.set()
+                    if 'decoded' in packet:
+                        portnum = packet['decoded'].get('portnum')
+                        # Listen for both ADMIN_APP and ROUTING_APP (errors come on ROUTING_APP)
+                        if portnum in ['ADMIN_APP', 'ROUTING_APP']:
+                            # Check if this is from our target node
+                            from_id = packet.get('fromId', packet.get('from'))
+                            if from_id == target_node_id or f"!{from_id}" == target_node_id:
+                                logger.info(f"Received response from {from_id} on {portnum}")
+                                
+                                # Check for routing errors
+                                if portnum == 'ROUTING_APP':
+                                    error = packet.get('decoded', {}).get('error_reason')
+                                    if error:
+                                        logger.error(f"Routing error from target: {error}")
+                                        response_data['error'] = error
+                                
+                                response_data['packet'] = packet
+                                response_received.set()
                 except Exception as e:
                     logger.error(f"Error in response handler: {e}")
             
