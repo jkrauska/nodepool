@@ -55,6 +55,78 @@ class NodeManager:
 
         return nodes
 
+    async def discover_mdns_nodes(
+        self,
+        timeout: int = 5,
+        progress_callback: Callable[[str, str], None] | None = None,
+    ) -> list[tuple[str, str]]:
+        """Discover Meshtastic nodes via mDNS/Zeroconf.
+
+        Args:
+            timeout: Seconds to wait for mDNS responses
+            progress_callback: Optional callback(connection_string, instance_name)
+
+        Returns:
+            List of tuples (connection_string, instance_name)
+            e.g., [("tcp://192.168.1.100:4403", "Meshtastic-2")]
+        """
+        from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
+
+        discovered: list[tuple[str, str]] = []
+
+        class MeshtasticListener(ServiceListener):
+            def __init__(self):
+                self.services: dict[str, Any] = {}
+
+            def add_service(self, zc: Zeroconf, type_: str, name: str) -> None:
+                info = zc.get_service_info(type_, name)
+                if info:
+                    self.services[name] = info
+                    # Extract addresses and create connection string
+                    if info.parsed_addresses():
+                        addr = info.parsed_addresses()[0]
+                        port = info.port
+                        connection_string = f"tcp://{addr}:{port}"
+                        instance_name = name.replace(f".{type_}", "")
+                        discovered.append((connection_string, instance_name))
+                        if progress_callback:
+                            progress_callback(connection_string, instance_name)
+
+            def remove_service(self, zc: Zeroconf, type_: str, name: str) -> None:
+                pass
+
+            def update_service(self, zc: Zeroconf, type_: str, name: str) -> None:
+                pass
+
+        # Run mDNS discovery in thread pool
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None, self._discover_mdns_blocking, timeout, MeshtasticListener()
+        )
+
+        return discovered
+
+    def _discover_mdns_blocking(
+        self, timeout: int, listener: Any
+    ) -> None:
+        """Blocking mDNS discovery (runs in thread pool).
+
+        Args:
+            timeout: Seconds to wait for responses
+            listener: ServiceListener instance
+        """
+        from zeroconf import ServiceBrowser, Zeroconf
+        import time
+
+        zeroconf = Zeroconf()
+        try:
+            # Browse for Meshtastic services
+            ServiceBrowser(zeroconf, "_meshtastic._tcp.local.", listener)
+            # Wait for responses
+            time.sleep(timeout)
+        finally:
+            zeroconf.close()
+
     async def _list_serial_ports(self) -> list[str]:
         """List available serial ports based on the operating system.
 

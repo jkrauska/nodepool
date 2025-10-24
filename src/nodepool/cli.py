@@ -125,8 +125,13 @@ def connection_add(connection_string: str, db: str):
     is_flag=True,
     help="Show detailed output including failed port scans",
 )
-def discover(db: str, ports: tuple[str, ...], verbose: bool):
-    """Discover Meshtastic nodes on serial ports and add them to the database."""
+@click.option(
+    "--network",
+    is_flag=True,
+    help="Also scan local network via mDNS for TCP nodes",
+)
+def discover(db: str, ports: tuple[str, ...], verbose: bool, network: bool):
+    """Discover Meshtastic nodes on serial ports and optionally via mDNS on the local network."""
     async def _discover():
         console.print("[bold blue]Discovering Meshtastic nodes...[/bold blue]")
 
@@ -137,11 +142,13 @@ def discover(db: str, ports: tuple[str, ...], verbose: bool):
         if port_list is None:
             port_list = await manager._list_serial_ports()
 
-        if not port_list:
+        if not port_list and not network:
             console.print("[yellow]No serial ports found to scan.[/yellow]")
+            console.print("[dim]Tip: Use --network flag to scan local network via mDNS[/dim]")
             return
 
-        console.print(f"Scanning {len(port_list)} serial port(s)...\n")
+        if port_list:
+            console.print(f"Scanning {len(port_list)} serial port(s)...\n")
 
         # Track discovered nodes
         discovered = []
@@ -182,17 +189,61 @@ def discover(db: str, ports: tuple[str, ...], verbose: bool):
                     error_msg = "No response"
                 console.print(f"  [dim]✗ {port} → {error_msg}[/dim]")
 
-        # Discover nodes with progress callback
-        nodes = await manager.discover_nodes(
-            serial_ports=port_list,
-            progress_callback=progress_callback_with_tracking
-        )
+        # Discover serial nodes with progress callback
+        if port_list:
+            nodes = await manager.discover_nodes(
+                serial_ports=port_list,
+                progress_callback=progress_callback_with_tracking
+            )
+        else:
+            nodes = []
+
+        # Discover mDNS nodes if --network flag is set
+        if network:
+            console.print("\nScanning local network via mDNS...\n")
+            
+            mdns_discovered = []
+            
+            def mdns_progress_callback(connection_string: str, instance_name: str):
+                """Handle mDNS discovery progress."""
+                console.print(f"  Found: {instance_name} at {connection_string}")
+                mdns_discovered.append((connection_string, instance_name))
+            
+            # Discover via mDNS
+            mdns_results = await manager.discover_mdns_nodes(
+                timeout=5,
+                progress_callback=mdns_progress_callback
+            )
+            
+            # Try to connect to each discovered TCP node
+            if mdns_results:
+                console.print(f"\nConnecting to {len(mdns_results)} discovered node(s)...\n")
+                
+                for connection_string, instance_name in mdns_results:
+                    try:
+                        node = await manager.connect_to_node(connection_string)
+                        nodes.append(node)
+                        port_map[node.id] = connection_string
+                        console.print(
+                            f"  [green]✓[/green] {connection_string} → [bold]{node.short_name}[/bold] "
+                            f"({node.hw_model})"
+                        )
+                    except Exception as e:
+                        if verbose:
+                            error_msg = str(e)
+                            if len(error_msg) > 50:
+                                error_msg = error_msg[:47] + "..."
+                            console.print(f"  [dim]✗ {connection_string} → {error_msg}[/dim]")
 
         if not nodes:
             console.print("\n[yellow]No nodes discovered.[/yellow]")
             if not verbose:
                 console.print(
                     "[dim]Tip: Use --verbose flag to see all scanned ports[/dim]"
+                )
+            if not network:
+                console.print(
+                    "[dim]Tip: Use --network flag to scan local network via mDNS[/dim]"
                 )
             return
 
