@@ -59,13 +59,27 @@ Sleep 3s
 
 Type "# Get detailed info about a node"
 Enter
-Type "nodepool info 29f35f73"
+Type "nodepool info 3c7f9d4e"
 Sleep 500ms
 Enter
 Sleep 3s
 
 
+Type "# Attempt to connect to a remote node via a connected node"
+Enter
+Type "nodepool remote verify  29f35f73 --via 3c7f9d4e"
+Sleep 500ms
+Enter
+Wait+Line@30s /$/
+Sleep 3s
 
+Type "# Attempt to retrieve remote config via a connected node"
+Enter
+Type "nodepool remote config 29f35f73 --via 3c7f9d4e"
+Sleep 500ms
+Enter
+Wait+Line@30s /$/
+Sleep 3s
 
 
 # Final pause

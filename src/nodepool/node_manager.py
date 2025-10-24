@@ -886,15 +886,34 @@ class NodeManager:
                 import meshtastic.serial_interface
                 interface = meshtastic.serial_interface.SerialInterface(via_connection)
             
+            # Give interface time to populate nodes list
+            logger.info(f"Waiting for node list to populate...")
+            time.sleep(2)
+            
+            # Debug: Log what nodes we can see
+            logger.info(f"Interface has {len(interface.nodes)} nodes")
+            logger.info(f"Available nodes: {list(interface.nodes.keys())}")
+            logger.info(f"Looking for: {target_node_id}")
+            
             # Check if target is in heard nodes
             if target_node_id not in interface.nodes:
-                interface.close()
-                raise ValueError(f"Target node {target_node_id} not found in mesh")
+                # Try without leading ! if it has one, or with ! if it doesn't
+                alt_id = target_node_id[1:] if target_node_id.startswith("!") else f"!{target_node_id}"
+                if alt_id in interface.nodes:
+                    target_node_id = alt_id
+                    logger.info(f"Found node with alternate ID format: {alt_id}")
+                else:
+                    available = ", ".join(list(interface.nodes.keys())[:5])
+                    interface.close()
+                    raise ValueError(
+                        f"Target node {target_node_id} not found in mesh. "
+                        f"Available nodes: {available}..."
+                    )
             
             # TODO: Send simple admin request (get node info or similar)
             # This is a placeholder - need to research Meshtastic admin API
             logger.info(f"Admin verification for {target_node_id} via {via_connection}")
-            logger.warning("Admin verification not yet implemented - assuming success")
+            logger.warning("Admin verification not yet implemented - assuming success based on node visibility")
             
             interface.close()
             return True
