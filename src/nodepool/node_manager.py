@@ -922,33 +922,41 @@ class NodeManager:
             
             def on_receive(packet, interface_obj):
                 """Handle incoming packets with detailed logging."""
+                import datetime
+                rx_time = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                
                 try:
-                    # Log ALL packets for debugging
+                    # Log EVERY packet we receive
                     from_id = packet.get('fromId', packet.get('from'))
-                    logger.info(f"Raw packet received from {from_id}: portnum={packet.get('decoded', {}).get('portnum')}, to={packet.get('to')}")
+                    to_id = packet.get('to')
+                    portnum = packet.get('decoded', {}).get('portnum', 'UNKNOWN')
+                    
+                    logger.info(f"[RX {rx_time}] Packet: from={from_id}, to={to_id}, port={portnum}")
+                    logger.info(f"  Full packet: {packet}")
                     
                     if 'decoded' in packet:
-                        portnum = packet['decoded'].get('portnum')
-                        # Listen for both ADMIN_APP and ROUTING_APP (errors come on ROUTING_APP)
-                        if portnum in ['ADMIN_APP', 'ROUTING_APP']:
-                            # Check if this is from our target node
-                            if from_id == target_node_id or f"!{from_id}" == target_node_id:
-                                logger.info(f"✓ Target response from {from_id} on {portnum}")
-                                logger.info(f"  Decoded: {packet.get('decoded')}")
-                                
-                                # Check for routing errors
-                                if portnum == 'ROUTING_APP':
-                                    error = packet.get('decoded', {}).get('error_reason')
-                                    if error:
-                                        logger.error(f"  Routing error: {error}")
-                                        response_data['error'] = error
-                                
-                                response_data['packet'] = packet
-                                response_received.set()
-                            else:
-                                logger.debug(f"Packet from different node: {from_id}")
+                        # Listen for ALL ports to see what we're getting
+                        logger.info(f"  Decoded content: {packet['decoded']}")
+                        
+                        # Check if this is from our target node
+                        if from_id == target_node_id or f"!{from_id}" == target_node_id:
+                            logger.info(f"  ✓✓✓ THIS IS FROM TARGET NODE ✓✓✓")
+                            
+                            # Check for routing errors
+                            if portnum == 'ROUTING_APP':
+                                error = packet.get('decoded', {}).get('error_reason')
+                                if error:
+                                    logger.error(f"  !!! Routing error: {error}")
+                                    response_data['error'] = error
+                            
+                            response_data['packet'] = packet
+                            response_received.set()
+                        else:
+                            logger.debug(f"  (not from target {target_node_id})")
                 except Exception as e:
                     logger.error(f"Error in response handler: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
             
             # Attach response handler
             interface.on_receive = on_receive
@@ -970,7 +978,9 @@ class NodeManager:
             logger.info(f"Using public key as session passkey: {public_key_bytes.hex()[:32]}...")
             
             # STEP 1: Request PKI admin access (begin_edit_settings)
-            logger.info(f"Step 1: Requesting PKI admin access to {target_node_id}")
+            import datetime
+            tx_time = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            logger.info(f"[TX {tx_time}] Step 1: Sending begin_edit_settings to {target_node_id}")
             pki_msg = admin_pb2.AdminMessage()
             pki_msg.session_passkey = public_key_bytes  # Set session key!
             pki_msg.begin_edit_settings = True
@@ -984,7 +994,7 @@ class NodeManager:
             )
             
             # Wait for PKI grant
-            logger.info("Waiting for begin_edit_settings response...")
+            logger.info(f"[{tx_time}] Waiting {timeout}s for begin_edit_settings response...")
             if response_received.wait(timeout=timeout):
                 logger.info("✓ begin_edit_settings response received")
                 response_received.clear()
@@ -995,7 +1005,8 @@ class NodeManager:
                 # Continue anyway
             
             # STEP 2: Commit edit settings (close the edit session)
-            logger.info(f"Step 2: Committing edit settings")
+            tx_time = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            logger.info(f"[TX {tx_time}] Step 2: Sending commit_edit_settings to {target_node_id}")
             commit_msg = admin_pb2.AdminMessage()
             commit_msg.session_passkey = public_key_bytes
             commit_msg.commit_edit_settings = True
@@ -1009,7 +1020,7 @@ class NodeManager:
             )
             
             # Wait for commit response
-            logger.info("Waiting for commit_edit_settings response...")
+            logger.info(f"[{tx_time}] Waiting {timeout}s for commit_edit_settings response...")
             if response_received.wait(timeout=timeout):
                 logger.info("✓ commit_edit_settings response received")
                 response_received.clear()
@@ -1019,7 +1030,8 @@ class NodeManager:
                 logger.warning(f"No commit response within {timeout}s")
             
             # STEP 3: Send actual admin command to verify
-            logger.info(f"Step 3: Sending get_owner request to verify admin access")
+            tx_time = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            logger.info(f"[TX {tx_time}] Step 3: Sending get_owner_request to {target_node_id}")
             admin_msg = admin_pb2.AdminMessage()
             admin_msg.session_passkey = public_key_bytes
             admin_msg.get_owner_request = True
@@ -1033,8 +1045,9 @@ class NodeManager:
             )
             
             # Wait for response
+            logger.info(f"[{tx_time}] Waiting {timeout}s for get_owner response...")
             if response_received.wait(timeout=timeout):
-                logger.info("Admin verification successful - received owner response")
+                logger.info("[SUCCESS] Admin verification successful - received owner response")
                 interface.close()
                 return True
             else:
