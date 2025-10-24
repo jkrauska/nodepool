@@ -138,17 +138,21 @@ def discover(db: str, ports: tuple[str, ...], verbose: bool, network: bool):
         manager = NodeManager()
         port_list = list(ports) if ports else None
 
-        # Get list of ports to scan
-        if port_list is None:
-            port_list = await manager._list_serial_ports()
+        # Get list of ports to scan (skip if only doing network scan)
+        if not network:
+            if port_list is None:
+                port_list = await manager._list_serial_ports()
 
-        if not port_list and not network:
-            console.print("[yellow]No serial ports found to scan.[/yellow]")
-            console.print("[dim]Tip: Use --network flag to scan local network via mDNS[/dim]")
-            return
+            if not port_list:
+                console.print("[yellow]No serial ports found to scan.[/yellow]")
+                console.print("[dim]Tip: Use --network flag to scan local network via mDNS[/dim]")
+                return
 
-        if port_list:
-            console.print(f"Scanning {len(port_list)} serial port(s)...\n")
+            if port_list:
+                console.print(f"Scanning {len(port_list)} serial port(s)...\n")
+        else:
+            # Network-only mode, skip serial scanning
+            port_list = []
 
         # Track discovered nodes
         discovered = []
