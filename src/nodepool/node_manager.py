@@ -866,7 +866,9 @@ class NodeManager:
     ) -> bool:
         """Blocking remote admin verification (runs in thread pool).
         
-        Sends a get_owner admin request to test PKI authentication.
+        Two-step process:
+        1. Request PKI admin access (begin_edit_settings)
+        2. Send get_owner request to verify
         
         Args:
             via_connection: Connection string for local node
@@ -934,13 +936,36 @@ class NodeManager:
             # Attach response handler
             interface.on_receive = on_receive
             
-            # Create admin message - request owner info
+            # STEP 1: Request PKI admin access (begin_edit_settings)
+            logger.info(f"Step 1: Requesting PKI admin access to {target_node_id}")
+            pki_msg = admin_pb2.AdminMessage()
+            pki_msg.begin_edit_settings = True
+            
+            interface.sendData(
+                pki_msg.SerializeToString(),
+                destinationId=target_node_id,
+                portNum=portnums_pb2.PortNum.ADMIN_APP,
+                wantAck=True,
+                wantResponse=True
+            )
+            
+            # Wait for PKI grant (longer timeout as this can take time)
+            logger.info("Waiting for PKI admin grant (this may take 30-120 seconds)...")
+            pki_timeout = min(timeout, 120)  # Cap at 120s but respect user's timeout
+            if response_received.wait(timeout=pki_timeout):
+                logger.info("PKI admin access response received")
+                response_received.clear()  # Reset for next response
+                response_data.clear()
+                time.sleep(1)  # Brief pause between requests
+            else:
+                logger.warning(f"No PKI admin response within {pki_timeout}s")
+                # Continue anyway - PKI might already be established
+            
+            # STEP 2: Send actual admin command to verify
+            logger.info(f"Step 2: Sending get_owner request to verify admin access")
             admin_msg = admin_pb2.AdminMessage()
             admin_msg.get_owner_request = True
             
-            logger.info(f"Sending get_owner admin request to {target_node_id}")
-            
-            # Send admin request
             interface.sendData(
                 admin_msg.SerializeToString(),
                 destinationId=target_node_id,
@@ -951,11 +976,11 @@ class NodeManager:
             
             # Wait for response
             if response_received.wait(timeout=timeout):
-                logger.info("Admin request successful - received response")
+                logger.info("Admin verification successful - received owner response")
                 interface.close()
                 return True
             else:
-                logger.warning(f"No admin response received within {timeout}s")
+                logger.warning(f"No owner response received within {timeout}s")
                 interface.close()
                 return False
             
