@@ -417,10 +417,32 @@ class NodeManager:
                     admin_key_bytes = getattr(security, "admin_key", b"")
                     public_key_bytes = getattr(security, "public_key", b"")
                     
+                    # Convert to hex, handling both bytes and RepeatedScalarContainer
+                    admin_key_hex = None
+                    if admin_key_bytes:
+                        if isinstance(admin_key_bytes, bytes):
+                            admin_key_hex = admin_key_bytes.hex()
+                        else:
+                            # Handle RepeatedScalarContainer or other types
+                            try:
+                                admin_key_hex = bytes(admin_key_bytes).hex()
+                            except (TypeError, ValueError):
+                                pass
+                    
+                    public_key_hex = None
+                    if public_key_bytes:
+                        if isinstance(public_key_bytes, bytes):
+                            public_key_hex = public_key_bytes.hex()
+                        else:
+                            try:
+                                public_key_hex = bytes(public_key_bytes).hex()
+                            except (TypeError, ValueError):
+                                pass
+                    
                     config["security"] = {
-                        "admin_key": admin_key_bytes.hex() if admin_key_bytes else None,
+                        "admin_key": admin_key_hex,
                         "admin_key_set": bool(admin_key_bytes),
-                        "public_key": public_key_bytes.hex() if public_key_bytes else None,
+                        "public_key": public_key_hex,
                         "public_key_set": bool(public_key_bytes),
                         "serial_enabled": getattr(security, "serial_enabled", True),
                         "admin_channel_index": getattr(security, "admin_channel_index", 0),
@@ -431,11 +453,24 @@ class NodeManager:
                     config["channels"] = []
                     for channel in local_node.channels:
                         psk_bytes = getattr(channel, "psk", b"")
+                        
+                        # Convert PSK to hex, handling both bytes and RepeatedScalarContainer
+                        psk_hex = None
+                        if psk_bytes:
+                            if isinstance(psk_bytes, bytes):
+                                psk_hex = psk_bytes.hex()
+                            else:
+                                # Handle RepeatedScalarContainer or other types
+                                try:
+                                    psk_hex = bytes(psk_bytes).hex()
+                                except (TypeError, ValueError):
+                                    pass
+                        
                         config["channels"].append(
                             {
                                 "name": getattr(channel, "name", ""),
                                 "index": getattr(channel, "index", 0),
-                                "psk": psk_bytes.hex() if psk_bytes else None,
+                                "psk": psk_hex,
                                 "psk_set": bool(psk_bytes),
                                 "uplink_enabled": getattr(channel, "uplink_enabled", False),
                                 "downlink_enabled": getattr(channel, "downlink_enabled", False),

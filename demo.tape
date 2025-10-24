@@ -29,7 +29,7 @@ Sleep 1s
 Type "nodepool discover"
 Sleep 500ms
 Enter
-Wait+Screen@30s /Saving/
+Wait+Line@30s /.*Total.*/
 Sleep 2s
 
 Type "# List all connected nodes"
@@ -44,7 +44,7 @@ Enter
 Type "nodepool sync"
 Sleep 500ms
 Enter
-Wait+Screen@30s /Successfully synced.*/
+Wait+Line@30s /.*Successfully synced.*/
 Sleep 2s
 
 # # Show node info
