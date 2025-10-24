@@ -148,6 +148,75 @@ Options:
   --db PATH    Database file path
 ```
 
+### `nodepool sync`
+
+Sync heard nodes from connected managed node(s).
+
+```bash
+nodepool sync [OPTIONS]
+
+Options:
+  --db PATH     Database file path
+  --port TEXT   Specific serial port to sync from
+```
+
+Examples:
+```bash
+# Sync from all managed nodes
+nodepool sync
+
+# Sync from specific port
+nodepool sync --port /dev/ttyUSB0
+```
+
+### `nodepool sync_meshview`
+
+Sync nodes from the MeshView API (alternative to direct node connection).
+
+```bash
+nodepool sync_meshview [OPTIONS]
+
+Options:
+  --db PATH           Database file path
+  --days-active INT   Number of days of activity to filter by (default: 3)
+  --url TEXT          MeshView API base URL (default: https://meshview.bayme.sh)
+```
+
+Examples:
+```bash
+# Sync nodes active in last 3 days
+nodepool sync_meshview
+
+# Sync nodes active in last 7 days
+nodepool sync_meshview --days-active 7
+
+# Use custom MeshView instance
+nodepool sync_meshview --url https://custom.meshview.example.com
+```
+
+**Note**: Nodes synced from MeshView are marked as heard from `meshviewAPI` and are not managed nodes (no direct serial connection).
+
+### `nodepool heard`
+
+List nodes heard on the mesh network (not directly connected).
+
+```bash
+nodepool heard [OPTIONS]
+
+Options:
+  --db PATH        Database file path
+  --seen-by TEXT   Filter by managed node that heard them
+```
+
+Examples:
+```bash
+# List all heard nodes
+nodepool heard
+
+# List nodes heard by specific managed node
+nodepool heard --seen-by !abc123
+```
+
 ### `nodepool export`
 
 Export node configurations to JSON or YAML.

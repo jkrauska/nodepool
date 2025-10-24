@@ -10,6 +10,7 @@ from rich.table import Table
 
 from nodepool.config_checker import ConfigChecker
 from nodepool.database import AsyncDatabase
+from nodepool.meshview_api import MeshViewAPIClient
 from nodepool.models import Node
 from nodepool.node_manager import NodeManager
 
@@ -643,6 +644,88 @@ def export(db: str, output: str | None, output_format: str):
             console.print(output_str)
 
     run_async(_export())
+
+
+@cli.command()
+@click.option(
+    "--db",
+    default="nodepool.db",
+    help="Database file path",
+    type=click.Path(),
+)
+@click.option(
+    "--days-active",
+    default=3,
+    help="Number of days of activity to filter by",
+    type=int,
+)
+@click.option(
+    "--url",
+    default="https://meshview.bayme.sh",
+    help="MeshView API base URL",
+)
+def sync_meshview(db: str, days_active: int, url: str):
+    """Sync nodes from MeshView API."""
+    async def _sync_meshview():
+        console.print(f"[bold blue]Fetching nodes from MeshView API...[/bold blue]")
+        console.print(f"URL: {url}/api/nodes?days_active={days_active}\n")
+
+        try:
+            # Fetch nodes from API
+            client = MeshViewAPIClient(base_url=url)
+            with console.status("[bold green]Fetching data from API..."):
+                nodes, heard_history = await client.fetch_nodes(days_active=days_active)
+
+            if not nodes:
+                console.print("[yellow]No nodes found from MeshView API.[/yellow]")
+                return
+
+            console.print(f"[green]Fetched {len(nodes)} node(s) from API[/green]\n")
+
+            # Save to database
+            console.print("Saving to database...")
+            async with AsyncDatabase(db) as database:
+                await database.initialize()
+
+                # Track new vs updated nodes
+                new_nodes = []
+                updated_nodes = []
+
+                for node in nodes:
+                    existing = await database.get_node(node.id)
+                    if existing is None:
+                        new_nodes.append(node)
+                    else:
+                        updated_nodes.append(node)
+
+                    # Save the node
+                    await database.save_node(node)
+
+                # Save heard history
+                for history in heard_history:
+                    await database.save_heard_history(history)
+
+            # Display summary
+            console.print(f"[green]Successfully synced {len(nodes)} node(s) from MeshView API[/green]")
+            if new_nodes:
+                console.print(f"  [cyan]→ {len(new_nodes)} new node(s)[/cyan]")
+                # Show sample of new nodes
+                sample = new_nodes[:5]
+                for node in sample:
+                    console.print(f"    - {node.short_name} ({node.id})")
+                if len(new_nodes) > 5:
+                    console.print(f"    ... and {len(new_nodes) - 5} more")
+            if updated_nodes:
+                console.print(f"  [dim]→ {len(updated_nodes)} updated node(s)[/dim]")
+
+            console.print("\n[dim]Note: All nodes from MeshView are marked as heard from 'meshviewAPI'[/dim]")
+
+        except Exception as e:
+            console.print(f"[red]Error fetching from MeshView API: {e}[/red]")
+            import traceback
+            console.print(f"[dim]{traceback.format_exc()}[/dim]")
+
+    run_async(_sync_meshview())
 
 
 if __name__ == "__main__":
