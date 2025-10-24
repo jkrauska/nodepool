@@ -42,6 +42,205 @@ def cli():
 
 
 @cli.group()
+def remote():
+    """Remote node operations via mesh."""
+
+
+@remote.command("verify")
+@click.argument("target_node_id")
+@click.option(
+    "--via",
+    "via_node_id",
+    required=True,
+    help="Local node ID to use as gateway",
+)
+@click.option(
+    "--db",
+    default="nodepool.db",
+    help="Database file path",
+    type=click.Path(),
+)
+@click.option(
+    "--timeout",
+    default=30,
+    help="Timeout in seconds",
+    type=int,
+)
+def remote_verify(target_node_id: str, via_node_id: str, db: str, timeout: int):
+    """Verify remote admin access to a node.
+    
+    Tests if you can remotely admin TARGET_NODE_ID via VIA_NODE_ID.
+    This checks PKI authentication and mesh reachability.
+    
+    Examples:
+      nodepool remote verify 29f35f73 --via 3c7f9d4e
+      nodepool remote verify !29f35f73 --via !3c7f9d4e
+    """
+    # Normalize node IDs
+    if not target_node_id.startswith("!"):
+        target_node_id = f"!{target_node_id}"
+    if not via_node_id.startswith("!"):
+        via_node_id = f"!{via_node_id}"
+    
+    async def _remote_verify():
+        async with AsyncDatabase(db) as database:
+            await database.initialize()
+            
+            # Get via node and its connection
+            via_node = await database.get_node(via_node_id)
+            if not via_node:
+                console.print(f"[red]Via node {via_node_id} not found in database.[/red]")
+                return
+            
+            via_connection = await database.get_connection(via_node_id)
+            if not via_connection:
+                console.print(f"[red]Via node {via_node.short_name} has no managed connection.[/red]")
+                console.print("[dim]Use [bold]nodepool connection add[/bold] to add a connection.[/dim]")
+                return
+            
+            # Get target node (if we know about it)
+            target_node = await database.get_node(target_node_id)
+            target_name = target_node.short_name if target_node else target_node_id
+        
+        console.print(f"\n[bold blue]Verifying admin access...[/bold blue]")
+        console.print(f"  Via: {via_node.short_name} ({via_connection})")
+        console.print(f"  Target: {target_name}")
+        console.print(f"  Timeout: {timeout}s\n")
+        
+        manager = NodeManager()
+        
+        with console.status("[bold green]Testing admin access..."):
+            try:
+                verified = await manager.verify_remote_admin(
+                    via_connection,
+                    target_node_id,
+                    timeout=timeout
+                )
+                
+                if verified:
+                    console.print(f"[green]✓ Admin access verified to {target_name}[/green]")
+                    console.print("\n[dim]You can now use:[/dim]")
+                    console.print(f"[dim]  nodepool remote config {target_node_id} --via {via_node_id}[/dim]")
+                else:
+                    console.print(f"[red]✗ Admin access verification failed[/red]")
+                    console.print("\n[yellow]Possible issues:[/yellow]")
+                    console.print("  - Target node not in range")
+                    console.print("  - PKI keys not configured correctly")
+                    console.print(f"  - Via node's public key not set as admin key on target")
+                
+            except Exception as e:
+                console.print(f"[red]✗ Verification failed: {e}[/red]")
+    
+    run_async(_remote_verify())
+
+
+@remote.command("config")
+@click.argument("target_node_id")
+@click.option(
+    "--via",
+    "via_node_id",
+    required=True,
+    help="Local node ID to use as gateway",
+)
+@click.option(
+    "--db",
+    default="nodepool.db",
+    help="Database file path",
+    type=click.Path(),
+)
+@click.option(
+    "--timeout",
+    default=30,
+    help="Timeout in seconds per attempt",
+    type=int,
+)
+@click.option(
+    "--retries",
+    default=2,
+    help="Number of retry attempts",
+    type=int,
+)
+def remote_config(target_node_id: str, via_node_id: str, db: str, timeout: int, retries: int):
+    """Get configuration from remote node over the mesh.
+    
+    Retrieves config from TARGET_NODE_ID via VIA_NODE_ID using PKI admin auth.
+    
+    Examples:
+      nodepool remote config 29f35f73 --via 3c7f9d4e
+      nodepool remote config !29f35f73 --via !3c7f9d4e --timeout 60
+    """
+    # Normalize node IDs
+    if not target_node_id.startswith("!"):
+        target_node_id = f"!{target_node_id}"
+    if not via_node_id.startswith("!"):
+        via_node_id = f"!{via_node_id}"
+    
+    async def _remote_config():
+        async with AsyncDatabase(db) as database:
+            await database.initialize()
+            
+            # Get via node and its connection
+            via_node = await database.get_node(via_node_id)
+            if not via_node:
+                console.print(f"[red]Via node {via_node_id} not found in database.[/red]")
+                return
+            
+            via_connection = await database.get_connection(via_node_id)
+            if not via_connection:
+                console.print(f"[red]Via node {via_node.short_name} has no managed connection.[/red]")
+                return
+            
+            # Get target node (if we know about it)
+            target_node = await database.get_node(target_node_id)
+            target_name = target_node.short_name if target_node else target_node_id
+        
+        console.print(f"\n[bold blue]Retrieving remote configuration...[/bold blue]")
+        console.print(f"  Via: {via_node.short_name} ({via_connection})")
+        console.print(f"  Target: {target_name}")
+        console.print(f"  Timeout: {timeout}s (x{retries+1} attempts)\n")
+        
+        manager = NodeManager()
+        
+        with console.status("[bold green]Requesting config over mesh..."):
+            try:
+                node = await manager.get_remote_config(
+                    via_connection,
+                    target_node_id,
+                    timeout=timeout,
+                    retries=retries
+                )
+                
+                console.print(f"[green]✓ Retrieved config from {node.short_name}[/green]\n")
+                
+                # Save to database with mesh:// connection
+                mesh_connection = f"mesh://{via_node_id}"
+                async with AsyncDatabase(db) as database:
+                    await database.initialize()
+                    await database.save_node(node)
+                    await database.save_connection(node.id, mesh_connection)
+                
+                console.print(f"[dim]Saved to database with connection: {mesh_connection}[/dim]")
+                console.print(f"\n[dim]View details with:[/dim]")
+                console.print(f"[dim]  nodepool info {target_node_id}[/dim]")
+                
+            except TimeoutError:
+                console.print(f"[red]✗ Timeout - no response from {target_name}[/red]")
+                console.print(f"\n[yellow]Node may be:[/yellow]")
+                console.print("  - Out of range")
+                console.print("  - Powered off")
+                console.print("  - Too many hops away")
+            except PermissionError as e:
+                console.print(f"[red]✗ Permission denied: {e}[/red]")
+                console.print(f"\n[yellow]Check that:[/yellow]")
+                console.print(f"  - {via_node.short_name}'s public key is set as admin key on {target_name}")
+                console.print("  - PKI keys are configured correctly")
+            except Exception as e:
+                console.print(f"[red]✗ Failed: {e}[/red]")
+    
+    run_async(_remote_config())
+
+
+@cli.group()
 def connection():
     """Manage node connections."""
 

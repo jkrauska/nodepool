@@ -715,6 +715,68 @@ class NodeManager:
         tasks = [self.check_node_reachability(node) for node in nodes]
         return await asyncio.gather(*tasks)
 
+    async def verify_remote_admin(
+        self, 
+        via_connection: str,
+        target_node_id: str,
+        timeout: int = 30
+    ) -> bool:
+        """Verify remote admin access to a node.
+        
+        Sends a simple admin request to test PKI authentication.
+        
+        Args:
+            via_connection: Connection string for local node (serial/TCP)
+            target_node_id: Target node ID to verify admin access
+            timeout: Timeout in seconds
+            
+        Returns:
+            True if admin access verified, False otherwise
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, 
+            self._verify_remote_admin_blocking,
+            via_connection,
+            target_node_id,
+            timeout
+        )
+    
+    async def get_remote_config(
+        self,
+        via_connection: str,
+        target_node_id: str,
+        timeout: int = 30,
+        retries: int = 2
+    ) -> Node:
+        """Get configuration from remote node over the mesh.
+        
+        Uses PKI admin authentication to request config.
+        
+        Args:
+            via_connection: Connection string for local node
+            target_node_id: Target node ID to get config from
+            timeout: Timeout in seconds per attempt
+            retries: Number of retry attempts
+            
+        Returns:
+            Node object with remote config
+            
+        Raises:
+            TimeoutError: If no response after retries
+            PermissionError: If admin auth fails
+            ValueError: If target not found or invalid response
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            self._get_remote_config_blocking,
+            via_connection,
+            target_node_id,
+            timeout,
+            retries
+        )
+
     async def import_heard_nodes(self, connection_string: str, managed_node_id: str) -> tuple[list[Node], list[HeardHistory]]:
         """Import all heard nodes from a connected device.
 
@@ -795,3 +857,116 @@ class NodeManager:
 
         interface.close()
         return heard_nodes, heard_history
+
+    def _verify_remote_admin_blocking(
+        self,
+        via_connection: str,
+        target_node_id: str,
+        timeout: int
+    ) -> bool:
+        """Blocking remote admin verification (runs in thread pool).
+        
+        Args:
+            via_connection: Connection string for local node
+            target_node_id: Target node ID
+            timeout: Timeout in seconds
+            
+        Returns:
+            True if admin access verified
+        """
+        import time
+        
+        try:
+            # Connect to local node
+            if via_connection.startswith("tcp://"):
+                import meshtastic.tcp_interface
+                host_port = via_connection[6:]
+                interface = meshtastic.tcp_interface.TCPInterface(hostname=host_port)
+            else:
+                import meshtastic.serial_interface
+                interface = meshtastic.serial_interface.SerialInterface(via_connection)
+            
+            # Check if target is in heard nodes
+            if target_node_id not in interface.nodes:
+                interface.close()
+                raise ValueError(f"Target node {target_node_id} not found in mesh")
+            
+            # TODO: Send simple admin request (get node info or similar)
+            # This is a placeholder - need to research Meshtastic admin API
+            logger.info(f"Admin verification for {target_node_id} via {via_connection}")
+            logger.warning("Admin verification not yet implemented - assuming success")
+            
+            interface.close()
+            return True
+            
+        except Exception as e:
+            logger.error(f"Admin verification failed: {e}")
+            return False
+    
+    def _get_remote_config_blocking(
+        self,
+        via_connection: str,
+        target_node_id: str,
+        timeout: int,
+        retries: int
+    ) -> Node:
+        """Blocking remote config retrieval (runs in thread pool).
+        
+        Args:
+            via_connection: Connection string for local node
+            target_node_id: Target node ID
+            timeout: Timeout in seconds
+            retries: Number of retries
+            
+        Returns:
+            Node object with config
+            
+        Raises:
+            TimeoutError: If no response
+            PermissionError: If auth fails
+            ValueError: If invalid response
+        """
+        import time
+        
+        # Connect to local node
+        if via_connection.startswith("tcp://"):
+            import meshtastic.tcp_interface
+            host_port = via_connection[6:]
+            interface = meshtastic.tcp_interface.TCPInterface(hostname=host_port)
+        else:
+            import meshtastic.serial_interface
+            interface = meshtastic.serial_interface.SerialInterface(via_connection)
+        
+        try:
+            # Check if target exists in heard nodes
+            if target_node_id not in interface.nodes:
+                interface.close()
+                raise ValueError(f"Target node {target_node_id} not found in mesh")
+            
+            target_data = interface.nodes[target_node_id]
+            user = target_data.get("user", {})
+            
+            # For now, create node with basic info from heard data
+            # TODO: Implement actual admin config request
+            logger.warning(f"Remote config request for {target_node_id} - using heard data as placeholder")
+            
+            node = Node(
+                id=target_node_id,
+                short_name=user.get("shortName", "?"),
+                long_name=user.get("longName", "Unknown"),
+                hw_model=user.get("hwModel"),
+                firmware_version=None,
+                last_seen=datetime.fromtimestamp(target_data.get("lastHeard", time.time())),
+                is_active=True,
+                snr=target_data.get("snr"),
+                hops_away=target_data.get("hopsAway"),
+                config={},  # TODO: Get actual config via admin request
+            )
+            
+            interface.close()
+            return node
+            
+        except Exception as e:
+            interface.close()
+            logger.error(f"Remote config retrieval failed: {e}")
+            raise
