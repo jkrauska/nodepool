@@ -921,26 +921,32 @@ class NodeManager:
             response_data = {}
             
             def on_receive(packet, interface_obj):
-                """Handle incoming packets."""
+                """Handle incoming packets with detailed logging."""
                 try:
+                    # Log ALL packets for debugging
+                    from_id = packet.get('fromId', packet.get('from'))
+                    logger.info(f"Raw packet received from {from_id}: portnum={packet.get('decoded', {}).get('portnum')}, to={packet.get('to')}")
+                    
                     if 'decoded' in packet:
                         portnum = packet['decoded'].get('portnum')
                         # Listen for both ADMIN_APP and ROUTING_APP (errors come on ROUTING_APP)
                         if portnum in ['ADMIN_APP', 'ROUTING_APP']:
                             # Check if this is from our target node
-                            from_id = packet.get('fromId', packet.get('from'))
                             if from_id == target_node_id or f"!{from_id}" == target_node_id:
-                                logger.info(f"Received response from {from_id} on {portnum}")
+                                logger.info(f"✓ Target response from {from_id} on {portnum}")
+                                logger.info(f"  Decoded: {packet.get('decoded')}")
                                 
                                 # Check for routing errors
                                 if portnum == 'ROUTING_APP':
                                     error = packet.get('decoded', {}).get('error_reason')
                                     if error:
-                                        logger.error(f"Routing error from target: {error}")
+                                        logger.error(f"  Routing error: {error}")
                                         response_data['error'] = error
                                 
                                 response_data['packet'] = packet
                                 response_received.set()
+                            else:
+                                logger.debug(f"Packet from different node: {from_id}")
                 except Exception as e:
                     logger.error(f"Error in response handler: {e}")
             
@@ -977,22 +983,45 @@ class NodeManager:
                 wantResponse=True
             )
             
-            # Wait for PKI grant (longer timeout as this can take time)
-            logger.info("Waiting for PKI admin grant (this may take 30-120 seconds)...")
-            pki_timeout = min(timeout, 120)  # Cap at 120s but respect user's timeout
-            if response_received.wait(timeout=pki_timeout):
-                logger.info("PKI admin access response received")
-                response_received.clear()  # Reset for next response
+            # Wait for PKI grant
+            logger.info("Waiting for begin_edit_settings response...")
+            if response_received.wait(timeout=timeout):
+                logger.info("✓ begin_edit_settings response received")
+                response_received.clear()
                 response_data.clear()
-                time.sleep(1)  # Brief pause between requests
+                time.sleep(0.5)
             else:
-                logger.warning(f"No PKI admin response within {pki_timeout}s")
-                # Continue anyway - PKI might already be established
+                logger.warning(f"No begin_edit_settings response within {timeout}s")
+                # Continue anyway
             
-            # STEP 2: Send actual admin command to verify
-            logger.info(f"Step 2: Sending get_owner request to verify admin access")
+            # STEP 2: Commit edit settings (close the edit session)
+            logger.info(f"Step 2: Committing edit settings")
+            commit_msg = admin_pb2.AdminMessage()
+            commit_msg.session_passkey = public_key_bytes
+            commit_msg.commit_edit_settings = True
+            
+            interface.sendData(
+                commit_msg.SerializeToString(),
+                destinationId=target_node_id,
+                portNum=portnums_pb2.PortNum.ADMIN_APP,
+                wantAck=True,
+                wantResponse=True
+            )
+            
+            # Wait for commit response
+            logger.info("Waiting for commit_edit_settings response...")
+            if response_received.wait(timeout=timeout):
+                logger.info("✓ commit_edit_settings response received")
+                response_received.clear()
+                response_data.clear()
+                time.sleep(0.5)
+            else:
+                logger.warning(f"No commit response within {timeout}s")
+            
+            # STEP 3: Send actual admin command to verify
+            logger.info(f"Step 3: Sending get_owner request to verify admin access")
             admin_msg = admin_pb2.AdminMessage()
-            admin_msg.session_passkey = public_key_bytes  # Include session key in all admin messages!
+            admin_msg.session_passkey = public_key_bytes
             admin_msg.get_owner_request = True
             
             interface.sendData(
