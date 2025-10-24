@@ -476,6 +476,159 @@ class NodeManager:
                                 "downlink_enabled": getattr(channel, "downlink_enabled", False),
                             }
                         )
+                
+                # Extract position config (in localConfig, not moduleConfig)
+                if hasattr(local_config, "position"):
+                    position = local_config.position
+                    config["position"] = {
+                        "position_broadcast_secs": getattr(position, "position_broadcast_secs", 0),
+                        "position_broadcast_smart_enabled": getattr(position, "position_broadcast_smart_enabled", False),
+                        "fixed_position": getattr(position, "fixed_position", False),
+                        "gps_enabled": getattr(position, "gps_enabled", True),
+                        "gps_update_interval": getattr(position, "gps_update_interval", 0),
+                        "gps_attempt_time": getattr(position, "gps_attempt_time", 0),
+                        "position_flags": getattr(position, "position_flags", 0),
+                    }
+                
+                # Extract module configs (modern API)
+                if hasattr(local_node, "moduleConfig"):
+                    module_config = local_node.moduleConfig
+                    
+                    # MQTT Module
+                    if hasattr(module_config, "mqtt"):
+                        mqtt = module_config.mqtt
+                        config["mqtt"] = {
+                            "enabled": getattr(mqtt, "enabled", False),
+                            "address": getattr(mqtt, "address", ""),
+                            "username": getattr(mqtt, "username", ""),
+                            "password": getattr(mqtt, "password", ""),
+                            "encryption_enabled": getattr(mqtt, "encryption_enabled", False),
+                            "json_enabled": getattr(mqtt, "json_enabled", False),
+                            "tls_enabled": getattr(mqtt, "tls_enabled", False),
+                            "root": getattr(mqtt, "root", ""),
+                            "proxy_to_client_enabled": getattr(mqtt, "proxy_to_client_enabled", False),
+                            "map_reporting_enabled": getattr(mqtt, "map_reporting_enabled", False),
+                        }
+                    
+                    # Serial Module
+                    if hasattr(module_config, "serial"):
+                        serial = module_config.serial
+                        config["serial_module"] = {
+                            "enabled": getattr(serial, "enabled", False),
+                            "echo": getattr(serial, "echo", False),
+                            "rxd": getattr(serial, "rxd", 0),
+                            "txd": getattr(serial, "txd", 0),
+                            "baud": getattr(serial, "baud", 0),
+                            "timeout": getattr(serial, "timeout", 0),
+                            "mode": getattr(serial, "mode", 0),
+                        }
+                    
+                    # External Notification Module
+                    if hasattr(module_config, "external_notification"):
+                        ext_notif = module_config.external_notification
+                        config["external_notification"] = {
+                            "enabled": getattr(ext_notif, "enabled", False),
+                            "output_ms": getattr(ext_notif, "output_ms", 0),
+                            "output": getattr(ext_notif, "output", 0),
+                            "output_vibra": getattr(ext_notif, "output_vibra", 0),
+                            "output_buzzer": getattr(ext_notif, "output_buzzer", 0),
+                            "active": getattr(ext_notif, "active", False),
+                            "alert_message": getattr(ext_notif, "alert_message", False),
+                            "alert_bell": getattr(ext_notif, "alert_bell", False),
+                        }
+                    
+                    # Store & Forward Module
+                    if hasattr(module_config, "store_forward"):
+                        store_fwd = module_config.store_forward
+                        config["store_forward"] = {
+                            "enabled": getattr(store_fwd, "enabled", False),
+                            "heartbeat": getattr(store_fwd, "heartbeat", False),
+                            "records": getattr(store_fwd, "records", 0),
+                            "history_return_max": getattr(store_fwd, "history_return_max", 0),
+                            "history_return_window": getattr(store_fwd, "history_return_window", 0),
+                        }
+                    
+                    # Range Test Module
+                    if hasattr(module_config, "range_test"):
+                        range_test = module_config.range_test
+                        config["range_test"] = {
+                            "enabled": getattr(range_test, "enabled", False),
+                            "sender": getattr(range_test, "sender", 0),
+                            "save": getattr(range_test, "save", False),
+                        }
+                    
+                    # Telemetry Module
+                    if hasattr(module_config, "telemetry"):
+                        telemetry = module_config.telemetry
+                        config["telemetry"] = {
+                            "device_update_interval": getattr(telemetry, "device_update_interval", 0),
+                            "environment_update_interval": getattr(telemetry, "environment_update_interval", 0),
+                            "environment_measurement_enabled": getattr(telemetry, "environment_measurement_enabled", False),
+                            "environment_screen_enabled": getattr(telemetry, "environment_screen_enabled", False),
+                            "environment_display_fahrenheit": getattr(telemetry, "environment_display_fahrenheit", False),
+                        }
+                    
+                    # Canned Message Module
+                    if hasattr(module_config, "canned_message"):
+                        canned = module_config.canned_message
+                        config["canned_message"] = {
+                            "enabled": getattr(canned, "enabled", False),
+                            "allow_input_source": getattr(canned, "allow_input_source", ""),
+                            "send_bell": getattr(canned, "send_bell", False),
+                        }
+                    
+                    # Audio Module
+                    if hasattr(module_config, "audio"):
+                        audio = module_config.audio
+                        config["audio"] = {
+                            "enabled": getattr(audio, "enabled", False),
+                            "codec2_enabled": getattr(audio, "codec2_enabled", False),
+                            "pttt_gpio": getattr(audio, "pttt_gpio", 0),
+                        }
+                    
+                    # Remote Hardware Module
+                    if hasattr(module_config, "remote_hardware"):
+                        remote_hw = module_config.remote_hardware
+                        config["remote_hardware"] = {
+                            "enabled": getattr(remote_hw, "enabled", False),
+                            "allow_undefined_pin_access": getattr(remote_hw, "allow_undefined_pin_access", False),
+                        }
+                    
+                    # Neighbor Info Module
+                    if hasattr(module_config, "neighbor_info"):
+                        neighbor = module_config.neighbor_info
+                        config["neighbor_info"] = {
+                            "enabled": getattr(neighbor, "enabled", False),
+                            "update_interval": getattr(neighbor, "update_interval", 0),
+                        }
+                    
+                    # Ambient Lighting Module
+                    if hasattr(module_config, "ambient_lighting"):
+                        ambient = module_config.ambient_lighting
+                        config["ambient_lighting"] = {
+                            "enabled": getattr(ambient, "enabled", False),
+                            "current": getattr(ambient, "current", 0),
+                        }
+                    
+                    # Detection Sensor Module
+                    if hasattr(module_config, "detection_sensor"):
+                        detection = module_config.detection_sensor
+                        config["detection_sensor"] = {
+                            "enabled": getattr(detection, "enabled", False),
+                            "minimum_broadcast_secs": getattr(detection, "minimum_broadcast_secs", 0),
+                            "state_broadcast_secs": getattr(detection, "state_broadcast_secs", 0),
+                            "monitor_pin": getattr(detection, "monitor_pin", 0),
+                            "detection_triggered_high": getattr(detection, "detection_triggered_high", False),
+                            "use_pullup": getattr(detection, "use_pullup", False),
+                        }
+                    
+                    # Paxcounter Module
+                    if hasattr(module_config, "paxcounter"):
+                        paxcounter = module_config.paxcounter
+                        config["paxcounter"] = {
+                            "enabled": getattr(paxcounter, "enabled", False),
+                            "paxcounter_update_interval": getattr(paxcounter, "paxcounter_update_interval", 0),
+                        }
 
         except Exception as e:
             logger.warning(f"Failed to extract full config: {e}")

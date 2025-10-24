@@ -11,7 +11,7 @@ Set Theme "Dracula"
 Set Padding 20
 Set TypingSpeed 50ms
 
-Set PlaybackSpeed 1.5
+Set PlaybackSpeed 1.2
 
 # Then set prompt inside the shell
 Hide
@@ -29,8 +29,8 @@ Sleep 1s
 Type "nodepool discover"
 Sleep 500ms
 Enter
-Wait+Line@30s /.*Total.*/
-Sleep 2s
+Wait+Line@30s /$/
+Sleep 3s
 
 Type "# List all connected nodes"
 Enter
@@ -44,8 +44,8 @@ Enter
 Type "nodepool sync"
 Sleep 500ms
 Enter
-Wait+Line@30s /.*Successfully synced.*/
-Sleep 2s
+Wait+Line@30s /$/
+Sleep 3s
 
 # # Show node info
 # Type "clear"
@@ -80,4 +80,4 @@ Sleep 2s
 
 
 # Final pause
-Sleep 2s
+Sleep 10s

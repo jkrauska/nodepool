@@ -465,6 +465,104 @@ def info(node_id: str, db: str):
                     console.print(
                         f"    [{channel.get('index', '?')}] {channel.get('name', 'Unnamed')}{psk_info}"
                     )
+            
+            # Position config
+            if "position" in node.config:
+                pos = node.config["position"]
+                console.print("  Position:")
+                if pos.get("position_broadcast_secs"):
+                    interval_min = pos["position_broadcast_secs"] // 60
+                    console.print(f"    Broadcast: {pos['position_broadcast_secs']}s ({interval_min} min)")
+                console.print(f"    Smart Mode: {pos.get('position_broadcast_smart_enabled', False)}")
+                console.print(f"    GPS Enabled: {pos.get('gps_enabled', True)}")
+                console.print(f"    Fixed Position: {pos.get('fixed_position', False)}")
+            
+            # Module configs (only show enabled or configured modules)
+            console.print("\n[bold]Modules:[/bold]")
+            
+            # MQTT
+            if "mqtt" in node.config:
+                mqtt = node.config["mqtt"]
+                if mqtt.get("enabled"):
+                    console.print("  [cyan]MQTT:[/cyan]")
+                    console.print(f"    Enabled: {mqtt['enabled']}")
+                    if mqtt.get("address"):
+                        console.print(f"    Address: {mqtt['address']}")
+                    console.print(f"    Map Reporting: {mqtt.get('map_reporting_enabled', False)} {'[green](OK to MQTT)[/green]' if mqtt.get('map_reporting_enabled') else '[dim](IGNORE MQTT)[/dim]'}")
+                    console.print(f"    JSON: {mqtt.get('json_enabled', False)}")
+                    console.print(f"    TLS: {mqtt.get('tls_enabled', False)}")
+            
+            # Telemetry
+            if "telemetry" in node.config:
+                telem = node.config["telemetry"]
+                if telem.get("device_update_interval") or telem.get("environment_measurement_enabled"):
+                    console.print("  [cyan]Telemetry:[/cyan]")
+                    if telem.get("device_update_interval"):
+                        console.print(f"    Device Interval: {telem['device_update_interval']}s")
+                    if telem.get("environment_update_interval"):
+                        console.print(f"    Environment Interval: {telem['environment_update_interval']}s")
+                    console.print(f"    Environment: {telem.get('environment_measurement_enabled', False)}")
+                    console.print(f"    Display °F: {telem.get('environment_display_fahrenheit', False)}")
+            
+            # Store & Forward
+            if "store_forward" in node.config:
+                sf = node.config["store_forward"]
+                if sf.get("enabled"):
+                    console.print("  [cyan]Store & Forward:[/cyan]")
+                    console.print(f"    Enabled: {sf['enabled']}")
+                    console.print(f"    Records: {sf.get('records', 0)}")
+                    console.print(f"    Heartbeat: {sf.get('heartbeat', False)}")
+            
+            # Range Test
+            if "range_test" in node.config:
+                rt = node.config["range_test"]
+                if rt.get("enabled"):
+                    console.print("  [cyan]Range Test:[/cyan]")
+                    console.print(f"    Enabled: {rt['enabled']}")
+                    console.print(f"    Sender: {rt.get('sender', 0)}")
+                    console.print(f"    Save: {rt.get('save', False)}")
+            
+            # External Notification
+            if "external_notification" in node.config:
+                en = node.config["external_notification"]
+                if en.get("enabled"):
+                    console.print("  [cyan]External Notification:[/cyan]")
+                    console.print(f"    Enabled: {en['enabled']}")
+                    console.print(f"    Alert on Message: {en.get('alert_message', False)}")
+                    console.print(f"    Alert on Bell: {en.get('alert_bell', False)}")
+            
+            # Serial Module
+            if "serial_module" in node.config:
+                ser = node.config["serial_module"]
+                if ser.get("enabled"):
+                    console.print("  [cyan]Serial Module:[/cyan]")
+                    console.print(f"    Enabled: {ser['enabled']}")
+                    console.print(f"    Baud: {ser.get('baud', 0)}")
+                    console.print(f"    Echo: {ser.get('echo', False)}")
+            
+            # Neighbor Info
+            if "neighbor_info" in node.config:
+                ni = node.config["neighbor_info"]
+                if ni.get("enabled"):
+                    console.print("  [cyan]Neighbor Info:[/cyan]")
+                    console.print(f"    Enabled: {ni['enabled']}")
+                    console.print(f"    Update Interval: {ni.get('update_interval', 0)}s")
+            
+            # Detection Sensor
+            if "detection_sensor" in node.config:
+                ds = node.config["detection_sensor"]
+                if ds.get("enabled"):
+                    console.print("  [cyan]Detection Sensor:[/cyan]")
+                    console.print(f"    Enabled: {ds['enabled']}")
+                    console.print(f"    Monitor Pin: {ds.get('monitor_pin', 0)}")
+            
+            # Paxcounter
+            if "paxcounter" in node.config:
+                pc = node.config["paxcounter"]
+                if pc.get("enabled"):
+                    console.print("  [cyan]Paxcounter:[/cyan]")
+                    console.print(f"    Enabled: {pc['enabled']}")
+                    console.print(f"    Update Interval: {pc.get('paxcounter_update_interval', 0)}s")
 
         console.print()
 
