@@ -166,13 +166,22 @@ class AsyncDatabase:
             ON CONFLICT(id) DO UPDATE SET
                 short_name = excluded.short_name,
                 long_name = excluded.long_name,
-                hw_model = excluded.hw_model,
-                firmware_version = excluded.firmware_version,
+                hw_model = CASE 
+                    WHEN excluded.hw_model IS NOT NULL THEN excluded.hw_model
+                    ELSE nodes.hw_model
+                END,
+                firmware_version = CASE 
+                    WHEN excluded.firmware_version IS NOT NULL THEN excluded.firmware_version
+                    ELSE nodes.firmware_version
+                END,
                 last_seen = excluded.last_seen,
                 is_active = excluded.is_active,
                 snr = excluded.snr,
                 hops_away = excluded.hops_away,
-                config = excluded.config
+                config = CASE
+                    WHEN excluded.config != '{}' THEN excluded.config
+                    ELSE nodes.config
+                END
             """,
             (
                 node.id,
