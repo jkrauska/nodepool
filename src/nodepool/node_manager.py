@@ -359,25 +359,43 @@ class NodeManager:
         config: dict[str, Any] = {}
 
         try:
-            if hasattr(interface, "localNode"):
+            if hasattr(interface, "localNode") and interface.localNode:
                 local_node = interface.localNode
 
-                # Extract LoRa config
-                if hasattr(local_node, "radioConfig"):
+                # Modern API: Use localConfig
+                if hasattr(local_node, "localConfig"):
+                    local_config = local_node.localConfig
+                    
+                    # Extract LoRa config
+                    if hasattr(local_config, "lora"):
+                        lora = local_config.lora
+                        config["lora"] = {
+                            "hopLimit": getattr(lora, "hop_limit", None),
+                            "region": getattr(lora, "region", None),
+                        }
+                    
+                    # Extract device config
+                    if hasattr(local_config, "device"):
+                        device = local_config.device
+                        config["device"] = {
+                            "role": getattr(device, "role", None),
+                        }
+                
+                # Legacy API fallback: Try radioConfig
+                elif hasattr(local_node, "radioConfig"):
                     radio_config = local_node.radioConfig
                     config["lora"] = {
                         "hopLimit": getattr(radio_config, "hopLimit", None),
                         "region": getattr(radio_config, "region", None),
                     }
+                    
+                    if hasattr(local_node, "deviceConfig"):
+                        device_config = local_node.deviceConfig
+                        config["device"] = {
+                            "role": getattr(device_config, "role", None),
+                        }
 
-                # Extract device config
-                if hasattr(local_node, "deviceConfig"):
-                    device_config = local_node.deviceConfig
-                    config["device"] = {
-                        "role": getattr(device_config, "role", None),
-                    }
-
-                # Extract channels
+                # Extract channels (same for both APIs)
                 if hasattr(local_node, "channels"):
                     config["channels"] = []
                     for channel in local_node.channels:
