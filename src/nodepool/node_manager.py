@@ -413,39 +413,50 @@ class NodeManager:
                 # Extract security config (modern API)
                 if hasattr(local_node, "localConfig") and hasattr(local_node.localConfig, "security"):
                     security = local_node.localConfig.security
-                    # Store admin_key as hex string (it's a bytes field)
-                    admin_key_bytes = getattr(security, "admin_key", b"")
+                    
+                    # admin_key is a RepeatedScalarContainer with up to 3 keys
+                    admin_keys_container = getattr(security, "admin_key", [])
+                    admin_keys = []
+                    admin_keys_set = []
+                    
+                    # Extract all three admin key slots
+                    for i, key_bytes in enumerate(admin_keys_container if admin_keys_container else []):
+                        if key_bytes:
+                            if isinstance(key_bytes, bytes):
+                                key_hex = key_bytes.hex()
+                            else:
+                                try:
+                                    key_hex = bytes(key_bytes).hex()
+                                except (TypeError, ValueError):
+                                    key_hex = None
+                            
+                            if key_hex:
+                                admin_keys.append(key_hex)
+                                admin_keys_set.append(i)
+                    
+                    # Extract public/private keys
+                    private_key_bytes = getattr(security, "private_key", b"")
                     public_key_bytes = getattr(security, "public_key", b"")
                     
-                    # Convert to hex, handling both bytes and RepeatedScalarContainer
-                    admin_key_hex = None
-                    if admin_key_bytes:
-                        if isinstance(admin_key_bytes, bytes):
-                            admin_key_hex = admin_key_bytes.hex()
-                        else:
-                            # Handle RepeatedScalarContainer or other types
-                            try:
-                                admin_key_hex = bytes(admin_key_bytes).hex()
-                            except (TypeError, ValueError):
-                                pass
+                    private_key_hex = None
+                    if private_key_bytes and isinstance(private_key_bytes, bytes):
+                        private_key_hex = private_key_bytes.hex()
                     
                     public_key_hex = None
-                    if public_key_bytes:
-                        if isinstance(public_key_bytes, bytes):
-                            public_key_hex = public_key_bytes.hex()
-                        else:
-                            try:
-                                public_key_hex = bytes(public_key_bytes).hex()
-                            except (TypeError, ValueError):
-                                pass
+                    if public_key_bytes and isinstance(public_key_bytes, bytes):
+                        public_key_hex = public_key_bytes.hex()
                     
                     config["security"] = {
-                        "admin_key": admin_key_hex,
-                        "admin_key_set": bool(admin_key_bytes),
+                        "admin_keys": admin_keys,  # List of set admin keys (hex)
+                        "admin_keys_set": admin_keys_set,  # Which slots are set (0, 1, 2)
+                        "admin_keys_count": len(admin_keys),
+                        "private_key": private_key_hex,
+                        "private_key_set": bool(private_key_bytes),
                         "public_key": public_key_hex,
                         "public_key_set": bool(public_key_bytes),
                         "serial_enabled": getattr(security, "serial_enabled", True),
-                        "admin_channel_index": getattr(security, "admin_channel_index", 0),
+                        "admin_channel_enabled": getattr(security, "admin_channel_enabled", False),
+                        "is_managed": getattr(security, "is_managed", False),
                     }
                 
                 # Extract channels with encryption info (same for both APIs)

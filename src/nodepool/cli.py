@@ -449,13 +449,29 @@ def info(node_id: str, db: str):
             if "security" in node.config:
                 security = node.config["security"]
                 console.print("  Security:")
-                admin_key = security.get('admin_key')
-                if admin_key:
-                    console.print(f"    Admin Key: {admin_key[:16]}... ({len(admin_key)//2} bytes)")
+                
+                # Display admin keys (up to 3 slots)
+                admin_keys = security.get('admin_keys', [])
+                admin_keys_set = security.get('admin_keys_set', [])
+                if admin_keys:
+                    console.print(f"    Admin Keys: {len(admin_keys)} set")
+                    for i, key in enumerate(admin_keys):
+                        slot = admin_keys_set[i] if i < len(admin_keys_set) else i
+                        console.print(f"      [{slot}] {key[:16]}... ({len(key)//2} bytes)")
                 else:
-                    console.print("    Admin Key: Not set")
+                    console.print("    Admin Keys: None set")
+                
+                # Display PKI keys
+                if security.get('public_key'):
+                    pub_key = security['public_key']
+                    console.print(f"    Public Key: {pub_key[:16]}... ({len(pub_key)//2} bytes)")
+                if security.get('private_key'):
+                    priv_key = security['private_key']
+                    console.print(f"    Private Key: {priv_key[:16]}... ({len(priv_key)//2} bytes)")
+                
                 console.print(f"    Serial Enabled: {security.get('serial_enabled', 'Unknown')}")
-                console.print(f"    Admin Channel: {security.get('admin_channel_index', 0)}")
+                console.print(f"    Admin Channel Enabled: {security.get('admin_channel_enabled', False)}")
+                console.print(f"    Managed: {security.get('is_managed', False)}")
 
             if node.config.get("channels"):
                 console.print("  Channels:")
