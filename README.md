@@ -4,13 +4,23 @@ Manage and maintain a group of Meshtastic nodes with a powerful CLI and database
 
 ## Features
 
-- 🔍 **Auto-discovery**: Scan serial ports to find Meshtastic nodes
+- 🔍 **Auto-discovery**: Scan serial ports and network via mDNS to find Meshtastic nodes
 - 📊 **Node tracking**: SQLite database to track node inventory and configurations
 - ✅ **Configuration validation**: Verify TTL, region, and channel settings across all nodes
 - 🔌 **Reachability checks**: Test if nodes are online and responding
 - 📁 **Export**: Save node configurations to JSON/YAML
 - ⚡ **Async operations**: Concurrent node operations for speed
 - 🎨 **Rich output**: Beautiful tables and formatted console output
+- 🌐 **Network discovery**: Find TCP-enabled nodes via mDNS
+- 📡 **Heard nodes**: Track nodes heard on the mesh network
+
+## Demo
+
+See nodepool in action:
+
+![Demo](demo.gif)
+
+*To generate the demo yourself: `vhs demo.tape` (requires [VHS](https://github.com/charmbracelet/vhs))*
 
 ## Requirements
 

@@ -48,6 +48,8 @@ coverage.xml
 # Project specific
 nodepool.db
 *.db
+demo.gif
+test_hw_model.py
 
 # OS
 .DS_Store
