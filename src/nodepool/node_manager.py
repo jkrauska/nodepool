@@ -1654,6 +1654,10 @@ class NodeManager:
                                 # Show request with attempt number
                                 print(f"[{idx}/{total_sections}] Requesting {section_name} config... (attempt {attempt})", end="", flush=True)
                                 
+                                # Debug: Show what index we're requesting
+                                logger.info(f"Requesting {section_name} - field index: {section_field.index}, field name: {section_field.name}")
+                                print(f" [index={section_field.index}]", end="", flush=True)
+                                
                                 # Time the request
                                 start_time = time.time()
                                 
