@@ -46,6 +46,90 @@ def remote():
     """Remote node operations via mesh."""
 
 
+@cli.command()
+@click.argument("target_node_id")
+@click.option(
+    "--via",
+    "via_connection",
+    required=True,
+    help="Connection string for local node (serial port or tcp://host:port)",
+)
+@click.option(
+    "--message",
+    default="PKI test",
+    help="Message text to send",
+)
+@click.option(
+    "--timeout",
+    default=30,
+    help="Timeout in seconds to wait for ACK",
+    type=int,
+)
+def pki_test(target_node_id: str, via_connection: str, message: str, timeout: int):
+    """Test PKI message delivery with ACK verification.
+    
+    Sends a message from a local node to a remote node over the mesh
+    and waits for an ACK to confirm delivery and PKI signature validation.
+    
+    This tests the same node-to-node PKI authentication shown as "Acknowledged"
+    in the Apple Meshtastic app.
+    
+    Examples:
+    \b
+      nodepool pki-test 29f35f73 --via /dev/cu.usbmodem123
+      nodepool pki-test !29f35f73 --via tcp://192.168.1.100:4403
+      nodepool pki-test 29f35f73 --via COM3 --message "Hello" --timeout 60
+    """
+    # Normalize node ID
+    if not target_node_id.startswith("!"):
+        target_node_id = f"!{target_node_id}"
+    
+    async def _pki_test():
+        console.print(f"\n[bold blue]PKI Message Test[/bold blue]")
+        console.print(f"  From: {via_connection}")
+        console.print(f"  To: {target_node_id}")
+        console.print(f"  Message: {message}")
+        console.print(f"  Timeout: {timeout}s\n")
+        
+        manager = NodeManager()
+        
+        try:
+            result = await manager.send_pki_message(
+                via_connection,
+                target_node_id,
+                message,
+                timeout
+            )
+            
+            if result["success"]:
+                console.print(f"\n[bold green]✓ SUCCESS - Message delivered and acknowledged![/bold green]")
+                console.print(f"  Packet ID: {result['packet_id']}")
+                console.print(f"  ACK from: {result['ack_from']}")
+                console.print("\n[dim]This confirms:[/dim]")
+                console.print("  - Message was delivered over the mesh")
+                console.print("  - Remote node received and validated PKI signature")
+                console.print("  - Node-to-node authentication working correctly")
+            else:
+                console.print(f"\n[bold red]✗ FAILED - No ACK received[/bold red]")
+                if result["packet_id"]:
+                    console.print(f"  Packet ID: {result['packet_id']}")
+                console.print(f"  Error: {result['error']}")
+                console.print("\n[yellow]Possible issues:[/yellow]")
+                console.print("  - Target node out of range or powered off")
+                console.print("  - Too many mesh hops (packet lost)")
+                console.print("  - PKI keys not configured correctly")
+                console.print("  - Target node not accepting messages")
+                
+        except Exception as e:
+            console.print(f"\n[bold red]✗ ERROR[/bold red]")
+            console.print(f"  {e}")
+            import traceback
+            if "--verbose" in sys.argv:
+                console.print(f"[dim]{traceback.format_exc()}[/dim]")
+    
+    run_async(_pki_test())
+
+
 @remote.command("verify")
 @click.argument("target_node_id")
 @click.option(
