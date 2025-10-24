@@ -120,7 +120,10 @@ def remote_verify(target_node_id: str, via_node_id: str, db: str, timeout: int):
                 if verified:
                     console.print(f"[green]✓ Admin access verified to {target_name}[/green]")
                     console.print("\n[dim]You can now use:[/dim]")
-                    console.print(f"[dim]  nodepool remote config {target_node_id} --via {via_node_id}[/dim]")
+                    # Remove ! from node IDs for cleaner shell usage
+                    target_clean = target_node_id[1:] if target_node_id.startswith("!") else target_node_id
+                    via_clean = via_node_id[1:] if via_node_id.startswith("!") else via_node_id
+                    console.print(f"[dim]  nodepool remote config {target_clean} --via {via_clean}[/dim]")
                 else:
                     console.print(f"[red]✗ Admin access verification failed[/red]")
                     console.print("\n[yellow]Possible issues:[/yellow]")
