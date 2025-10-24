@@ -34,7 +34,7 @@ def run_async(coro):
         return asyncio.run(coro)
 
 
-@click.group()
+@click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(version="0.1.0")
 def cli():
     """Nodepool - Manage and maintain a group of Meshtastic nodes."""
@@ -111,14 +111,38 @@ def discover(db: str, ports: tuple[str, ...], verbose: bool):
 
         console.print(f"\n[green]Found {len(nodes)} node(s)![/green]")
 
-        # Save to database
+        # Save to database and import heard nodes
         console.print("\nSaving to database...")
         async with AsyncDatabase(db) as database:
             await database.initialize()
+            
+            total_heard = 0
             for node in nodes:
                 await database.save_node(node)
+                
+                # Import heard nodes from each discovered managed node
+                if node.serial_port:
+                    console.print(f"Importing heard nodes from {node.short_name}...")
+                    try:
+                        heard_nodes, heard_history = await manager.import_heard_nodes(
+                            node.serial_port, node.id
+                        )
+                        
+                        # Save heard nodes and history
+                        for heard_node in heard_nodes:
+                            await database.save_node(heard_node)
+                        
+                        for history in heard_history:
+                            await database.save_heard_history(history)
+                        
+                        total_heard += len(heard_nodes)
+                        console.print(f"  → Imported {len(heard_nodes)} heard node(s)")
+                    except Exception as e:
+                        console.print(f"  [yellow]Warning: Could not import heard nodes: {e}[/yellow]")
 
-        console.print(f"[green]Successfully saved {len(nodes)} node(s) to database.[/green]")
+        console.print(f"[green]Successfully saved {len(nodes)} managed node(s) to database.[/green]")
+        if total_heard > 0:
+            console.print(f"[green]Imported {total_heard} heard node(s) from the mesh.[/green]")
 
     run_async(_discover())
 
@@ -136,38 +160,90 @@ def discover(db: str, ports: tuple[str, ...], verbose: bool):
     is_flag=True,
     help="Show inactive nodes as well",
 )
-def list(db: str, show_all: bool):
+@click.option(
+    "--managed-only",
+    is_flag=True,
+    help="Show only managed nodes (default)",
+)
+@click.option(
+    "--heard-only",
+    is_flag=True,
+    help="Show only heard nodes (from mesh)",
+)
+def list(db: str, show_all: bool, managed_only: bool, heard_only: bool):
     """List all nodes in the pool."""
     async def _list():
         async with AsyncDatabase(db) as database:
             await database.initialize()
-            nodes = await database.get_all_nodes(active_only=not show_all)
+            
+            # Get nodes based on filter
+            if heard_only:
+                nodes = await database.get_heard_nodes()
+            else:
+                nodes = await database.get_all_nodes(active_only=not show_all)
+                # Filter by managed status if requested
+                if not heard_only and managed_only:
+                    nodes = [n for n in nodes if n.managed]
+                elif not managed_only and not heard_only:
+                    # Default: show only managed nodes
+                    nodes = [n for n in nodes if n.managed]
 
         if not nodes:
             console.print("[yellow]No nodes found in database.[/yellow]")
             console.print("Run [bold]nodepool discover[/bold] to add nodes.")
             return
 
-        table = Table(title="Meshtastic Node Pool")
+        # Determine table title
+        if heard_only:
+            title = "Heard Nodes (from Mesh)"
+        elif managed_only or (not heard_only and not show_all):
+            title = "Managed Nodes"
+        else:
+            title = "All Nodes"
+
+        table = Table(title=title)
         table.add_column("Short Name", style="cyan", no_wrap=True)
         table.add_column("Node ID", style="magenta")
         table.add_column("Hardware", style="green")
         table.add_column("Firmware", style="blue")
-        table.add_column("Serial Port", style="yellow")
+        
+        if heard_only:
+            # Different columns for heard nodes
+            table.add_column("SNR", style="yellow")
+            table.add_column("Hops", style="blue")
+        else:
+            table.add_column("Serial Port", style="yellow")
+        
         table.add_column("Status", style="white")
 
         for node in nodes:
             status = "✓ Active" if node.is_active else "✗ Inactive"
             status_style = "green" if node.is_active else "red"
-
-            table.add_row(
-                node.short_name,
-                node.id,
-                node.hw_model or "Unknown",
-                node.firmware_version or "Unknown",
-                node.serial_port or "Not set",
-                f"[{status_style}]{status}[/{status_style}]",
-            )
+            
+            if heard_only:
+                # Show SNR and hops for heard nodes
+                snr_str = f"{node.snr:.1f}" if node.snr is not None else "?"
+                hops_str = str(node.hops_away) if node.hops_away is not None else "?"
+                
+                table.add_row(
+                    node.short_name,
+                    node.id,
+                    node.hw_model or "Unknown",
+                    node.firmware_version or "Unknown",
+                    snr_str,
+                    hops_str,
+                    f"[{status_style}]{status}[/{status_style}]",
+                )
+            else:
+                # Show serial port for managed nodes
+                table.add_row(
+                    node.short_name,
+                    node.id,
+                    node.hw_model or "Unknown",
+                    node.firmware_version or "Unknown",
+                    node.serial_port or "Not set",
+                    f"[{status_style}]{status}[/{status_style}]",
+                )
 
         console.print(table)
         console.print(f"\nTotal: {len(nodes)} node(s)")
@@ -355,6 +431,119 @@ def status(db: str):
         console.print(f"\n{reachable_count}/{len(statuses)} node(s) reachable")
 
     run_async(_status())
+
+
+@cli.command()
+@click.option(
+    "--db",
+    default="nodepool.db",
+    help="Database file path",
+    type=click.Path(),
+)
+@click.option(
+    "--port",
+    help="Specific serial port to sync from",
+)
+def sync(db: str, port: str | None):
+    """Sync heard nodes from connected managed node(s)."""
+    async def _sync():
+        async with AsyncDatabase(db) as database:
+            await database.initialize()
+            
+            # Get managed nodes
+            all_nodes = await database.get_all_nodes(active_only=True)
+            managed_nodes = [n for n in all_nodes if n.managed and n.serial_port]
+            
+            if not managed_nodes:
+                console.print("[yellow]No managed nodes with serial ports found.[/yellow]")
+                console.print("Run [bold]nodepool discover[/bold] first.")
+                return
+            
+            # Filter by port if specified
+            if port:
+                managed_nodes = [n for n in managed_nodes if n.serial_port == port]
+                if not managed_nodes:
+                    console.print(f"[red]No managed node found on port {port}[/red]")
+                    return
+            
+            console.print(f"[bold blue]Syncing heard nodes from {len(managed_nodes)} managed node(s)...[/bold blue]\n")
+            
+            manager = NodeManager()
+            total_heard = 0
+            
+            for node in managed_nodes:
+                console.print(f"Syncing from {node.short_name} ({node.serial_port})...")
+                try:
+                    heard_nodes, heard_history = await manager.import_heard_nodes(
+                        node.serial_port, node.id
+                    )
+                    
+                    # Save heard nodes and history
+                    for heard_node in heard_nodes:
+                        await database.save_node(heard_node)
+                    
+                    for history in heard_history:
+                        await database.save_heard_history(history)
+                    
+                    total_heard += len(heard_nodes)
+                    console.print(f"  [green]✓[/green] Imported {len(heard_nodes)} heard node(s)")
+                    
+                except Exception as e:
+                    console.print(f"  [red]✗[/red] Error: {e}")
+            
+            console.print(f"\n[green]Successfully synced {total_heard} total heard node(s)[/green]")
+    
+    run_async(_sync())
+
+
+@cli.command()
+@click.option(
+    "--db",
+    default="nodepool.db",
+    help="Database file path",
+    type=click.Path(),
+)
+@click.option(
+    "--seen-by",
+    help="Filter by managed node that heard them",
+)
+def heard(db: str, seen_by: str | None):
+    """List nodes heard on the mesh network."""
+    async def _heard():
+        async with AsyncDatabase(db) as database:
+            await database.initialize()
+            nodes = await database.get_heard_nodes(seen_by=seen_by)
+        
+        if not nodes:
+            console.print("[yellow]No heard nodes found.[/yellow]")
+            console.print("Run [bold]nodepool sync[/bold] to import heard nodes.")
+            return
+        
+        table = Table(title="Heard Nodes (from Mesh)")
+        table.add_column("Short Name", style="cyan", no_wrap=True)
+        table.add_column("Node ID", style="magenta")
+        table.add_column("Hardware", style="green")
+        table.add_column("SNR", style="yellow")
+        table.add_column("Hops", style="blue")
+        table.add_column("Last Seen", style="white")
+        
+        for node in nodes:
+            snr_str = f"{node.snr:.1f}" if node.snr is not None else "?"
+            hops_str = str(node.hops_away) if node.hops_away is not None else "?"
+            
+            table.add_row(
+                node.short_name,
+                node.id,
+                node.hw_model or "Unknown",
+                snr_str,
+                hops_str,
+                node.last_seen.strftime("%Y-%m-%d %H:%M"),
+            )
+        
+        console.print(table)
+        console.print(f"\nTotal: {len(nodes)} heard node(s)")
+    
+    run_async(_heard())
 
 
 @cli.command()

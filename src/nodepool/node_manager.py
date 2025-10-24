@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from nodepool.models import Node, NodeStatus
+from nodepool.models import HeardHistory, Node, NodeStatus
 
 logger = logging.getLogger(__name__)
 
@@ -299,3 +299,79 @@ class NodeManager:
         """
         tasks = [self.check_node_reachability(node) for node in nodes]
         return await asyncio.gather(*tasks)
+
+    async def import_heard_nodes(self, port: str, managed_node_id: str) -> tuple[list[Node], list[HeardHistory]]:
+        """Import all heard nodes from a connected device.
+
+        Args:
+            port: Serial port of the managed node
+            managed_node_id: ID of the managed node doing the hearing
+
+        Returns:
+            Tuple of (heard_nodes, heard_history_entries)
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._import_heard_nodes_blocking, port, managed_node_id)
+
+    def _import_heard_nodes_blocking(self, port: str, managed_node_id: str) -> tuple[list[Node], list[HeardHistory]]:
+        """Blocking import of heard nodes (runs in thread pool).
+
+        Args:
+            port: Serial port of the managed node
+            managed_node_id: ID of the managed node doing the hearing
+
+        Returns:
+            Tuple of (heard_nodes, heard_history_entries)
+        """
+        import meshtastic.serial_interface
+
+        interface = meshtastic.serial_interface.SerialInterface(port)
+        
+        heard_nodes = []
+        heard_history = []
+        timestamp = datetime.now()
+
+        # Get my node number to exclude it
+        my_node_num = interface.myInfo.my_node_num
+        my_node_id = f"!{my_node_num:08x}"
+
+        # Iterate through all nodes in the interface
+        for node_id, node_data in interface.nodes.items():
+            # Skip the managed node itself
+            if node_id == my_node_id:
+                continue
+
+            user = node_data.get("user", {})
+            
+            # Create heard node (marked as not managed)
+            heard_node = Node(
+                id=node_id,
+                short_name=user.get("shortName", "?"),
+                long_name=user.get("longName", "Unknown"),
+                serial_port=None,  # Heard nodes don't have serial ports
+                hw_model=user.get("hwModel"),
+                firmware_version=None,  # Don't have firmware version for heard nodes
+                last_seen=datetime.fromtimestamp(node_data.get("lastHeard", timestamp.timestamp())),
+                is_active=True,
+                managed=False,  # This is a heard node, not managed
+                snr=node_data.get("snr"),
+                hops_away=node_data.get("hopsAway"),
+                config={},  # No config for heard nodes
+            )
+            heard_nodes.append(heard_node)
+
+            # Create history entry
+            position = node_data.get("position", {})
+            history_entry = HeardHistory(
+                node_id=node_id,
+                seen_by=managed_node_id,
+                timestamp=timestamp,
+                snr=node_data.get("snr"),
+                hops_away=node_data.get("hopsAway"),
+                position_lat=position.get("latitude") if position else None,
+                position_lon=position.get("longitude") if position else None,
+            )
+            heard_history.append(history_entry)
+
+        interface.close()
+        return heard_nodes, heard_history

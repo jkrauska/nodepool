@@ -369,9 +369,20 @@ class AsyncDatabase:
             Node object
         """
         # Handle both old and new schema
-        managed = bool(row.get("managed", 1))  # Default to managed=True for old records
-        snr = row.get("snr")
-        hops_away = row.get("hops_away")
+        try:
+            managed = bool(row["managed"])
+        except (KeyError, IndexError):
+            managed = True  # Default to managed=True for old records
+        
+        try:
+            snr = row["snr"]
+        except (KeyError, IndexError):
+            snr = None
+        
+        try:
+            hops_away = row["hops_away"]
+        except (KeyError, IndexError):
+            hops_away = None
         
         return Node(
             id=row["id"],
