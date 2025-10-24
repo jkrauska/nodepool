@@ -464,7 +464,7 @@ def info(node_id: str, db: str):
                 # Display PKI keys
                 if security.get('public_key'):
                     pub_key = security['public_key']
-                    console.print(f"    Public Key: {pub_key[:16]}... ({len(pub_key)//2} bytes)")
+                    console.print(f"    Public Key: {pub_key}")
                 if security.get('private_key'):
                     console.print(f"    Private Key: XXXXX--PRIVATE-KEY--XXXXX (hidden)")
                 
