@@ -1138,7 +1138,8 @@ class NodeManager:
         via_connection: str,
         target_node_id: str,
         timeout: int = 30,
-        retries: int = 2
+        retries: int = 2,
+        sections: list[str] | None = None
     ) -> Node:
         """Get configuration from remote node over the mesh.
         
@@ -1503,7 +1504,8 @@ class NodeManager:
         via_connection: str,
         target_node_id: str,
         timeout: int,
-        retries: int
+        retries: int,
+        sections: list[str] | None = None
     ) -> Node:
         """Blocking remote config retrieval (runs in thread pool).
         
@@ -1678,8 +1680,8 @@ class NodeManager:
                     # Install stream interceptor to capture admin responses
                     handler = MessageResponseHandler(interface)
                     
-                    # Define config sections to request
-                    config_sections = [
+                    # Define all available config sections
+                    all_config_sections = [
                         ("device", config_pb2.Config.DESCRIPTOR.fields_by_name["device"]),
                         ("position", config_pb2.Config.DESCRIPTOR.fields_by_name["position"]),
                         ("power", config_pb2.Config.DESCRIPTOR.fields_by_name["power"]),
@@ -1689,11 +1691,20 @@ class NodeManager:
                         ("bluetooth", config_pb2.Config.DESCRIPTOR.fields_by_name["bluetooth"]),
                     ]
                     
-                    module_sections = [
+                    all_module_sections = [
                         ("mqtt", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["mqtt"]),
                         ("serial", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["serial"]),
                         ("telemetry", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["telemetry"]),
                     ]
+                    
+                    # Filter by requested sections if specified
+                    if sections:
+                        config_sections = [(name, field) for name, field in all_config_sections if name in sections]
+                        module_sections = [(name, field) for name, field in all_module_sections if name in sections]
+                        print(f"  Requesting specific sections: {', '.join(sections)}")
+                    else:
+                        config_sections = all_config_sections
+                        module_sections = all_module_sections
                     
                     # Combine with type labels
                     all_sections = []

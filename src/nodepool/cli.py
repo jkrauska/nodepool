@@ -259,14 +259,22 @@ def remote_verify(target_node_id: str, via_node_id: str, db: str, timeout: int):
     help="Number of retry attempts",
     type=int,
 )
-def remote_config(target_node_id: str, via_node_id: str, db: str, timeout: int, retries: int):
+@click.option(
+    "--sections",
+    multiple=True,
+    help="Specific config sections to retrieve (can specify multiple). Options: device, position, power, network, display, lora, bluetooth, mqtt, serial, telemetry",
+)
+def remote_config(target_node_id: str, via_node_id: str, db: str, timeout: int, retries: int, sections: tuple[str, ...]):
     """Get configuration from remote node over the mesh.
     
     Retrieves config from TARGET_NODE_ID via VIA_NODE_ID using PKI admin auth.
     
+    By default, retrieves all config sections. Use --sections to retrieve specific sections only.
+    
     Examples:
       nodepool remote config 29f35f73 --via 3c7f9d4e
       nodepool remote config !29f35f73 --via !3c7f9d4e --timeout 60
+      nodepool remote config 29f35f73 --via 3c7f9d4e --sections mqtt --sections telemetry
     """
     # Normalize node IDs
     if not target_node_id.startswith("!"):
@@ -306,7 +314,8 @@ def remote_config(target_node_id: str, via_node_id: str, db: str, timeout: int, 
                     via_connection,
                     target_node_id,
                     timeout=timeout,
-                    retries=retries
+                    retries=retries,
+                    sections=list(sections) if sections else None
                 )
                 
                 console.print(f"[green]✓ Retrieved config from {node.short_name}[/green]\n")
