@@ -3,9 +3,10 @@
 import asyncio
 import logging
 import platform
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from nodepool.models import HeardHistory, Node, NodeStatus
 
@@ -142,14 +143,14 @@ class NodeManager:
             my_node_num = my_info.my_node_num
             # Node IDs in the nodes dict are formatted as !xxxxxxxx (hex)
             node_id = f"!{my_node_num:08x}"
-            
+
             # Look up node details in the nodes dictionary
             if node_id not in interface.nodes:
                 interface.close()
                 raise ValueError(f"Node {node_id} (num: {my_node_num}) not found in nodes dict")
-            
+
             node_data = interface.nodes[node_id]
-            
+
             # Extract node details from user info
             user = node_data.get("user", {})
             node_id = user.get("id", "unknown")
@@ -326,7 +327,7 @@ class NodeManager:
         import meshtastic.serial_interface
 
         interface = meshtastic.serial_interface.SerialInterface(port)
-        
+
         heard_nodes = []
         heard_history = []
         timestamp = datetime.now()
@@ -342,7 +343,7 @@ class NodeManager:
                 continue
 
             user = node_data.get("user", {})
-            
+
             # Create heard node (marked as not managed)
             heard_node = Node(
                 id=node_id,

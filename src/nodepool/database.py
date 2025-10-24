@@ -47,6 +47,7 @@ class AsyncDatabase:
                 serial_port TEXT,
                 hw_model TEXT,
                 firmware_version TEXT,
+                first_seen TEXT NOT NULL,
                 last_seen TEXT NOT NULL,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 managed INTEGER NOT NULL DEFAULT 1,
@@ -120,6 +121,10 @@ class AsyncDatabase:
             await self._conn.execute("ALTER TABLE nodes ADD COLUMN snr REAL")
         if "hops_away" not in column_names:
             await self._conn.execute("ALTER TABLE nodes ADD COLUMN hops_away INTEGER")
+        if "first_seen" not in column_names:
+            # Add first_seen column and backfill with last_seen values
+            await self._conn.execute("ALTER TABLE nodes ADD COLUMN first_seen TEXT")
+            await self._conn.execute("UPDATE nodes SET first_seen = last_seen WHERE first_seen IS NULL")
 
         await self._conn.commit()
 
@@ -136,9 +141,9 @@ class AsyncDatabase:
             """
             INSERT INTO nodes (
                 id, short_name, long_name, serial_port, hw_model,
-                firmware_version, last_seen, is_active, managed,
+                firmware_version, first_seen, last_seen, is_active, managed,
                 snr, hops_away, config
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 short_name = excluded.short_name,
                 long_name = excluded.long_name,
@@ -159,6 +164,7 @@ class AsyncDatabase:
                 node.serial_port,
                 node.hw_model,
                 node.firmware_version,
+                node.first_seen.isoformat(),
                 node.last_seen.isoformat(),
                 1 if node.is_active else 0,
                 1 if node.managed else 0,
@@ -324,7 +330,7 @@ class AsyncDatabase:
         await self._conn.commit()
 
     async def get_heard_nodes(
-        self, 
+        self,
         seen_by: str | None = None,
         managed_only: bool = False,
     ) -> list[Node]:
@@ -353,7 +359,7 @@ class AsyncDatabase:
             params.append(seen_by)
 
         query += " ORDER BY last_seen DESC"
-        
+
         cursor = await self._conn.execute(query, params)
         rows = await cursor.fetchall()
 
@@ -373,17 +379,23 @@ class AsyncDatabase:
             managed = bool(row["managed"])
         except (KeyError, IndexError):
             managed = True  # Default to managed=True for old records
-        
+
         try:
             snr = row["snr"]
         except (KeyError, IndexError):
             snr = None
-        
+
         try:
             hops_away = row["hops_away"]
         except (KeyError, IndexError):
             hops_away = None
-        
+
+        try:
+            first_seen = datetime.fromisoformat(row["first_seen"])
+        except (KeyError, IndexError):
+            # For old records without first_seen, use last_seen as fallback
+            first_seen = datetime.fromisoformat(row["last_seen"])
+
         return Node(
             id=row["id"],
             short_name=row["short_name"],
@@ -391,6 +403,7 @@ class AsyncDatabase:
             serial_port=row["serial_port"],
             hw_model=row["hw_model"],
             firmware_version=row["firmware_version"],
+            first_seen=first_seen,
             last_seen=datetime.fromisoformat(row["last_seen"]),
             is_active=bool(row["is_active"]),
             managed=managed,

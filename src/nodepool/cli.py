@@ -115,11 +115,11 @@ def discover(db: str, ports: tuple[str, ...], verbose: bool):
         console.print("\nSaving to database...")
         async with AsyncDatabase(db) as database:
             await database.initialize()
-            
+
             total_heard = 0
             for node in nodes:
                 await database.save_node(node)
-                
+
                 # Import heard nodes from each discovered managed node
                 if node.serial_port:
                     console.print(f"Importing heard nodes from {node.short_name}...")
@@ -127,14 +127,14 @@ def discover(db: str, ports: tuple[str, ...], verbose: bool):
                         heard_nodes, heard_history = await manager.import_heard_nodes(
                             node.serial_port, node.id
                         )
-                        
+
                         # Save heard nodes and history
                         for heard_node in heard_nodes:
                             await database.save_node(heard_node)
-                        
+
                         for history in heard_history:
                             await database.save_heard_history(history)
-                        
+
                         total_heard += len(heard_nodes)
                         console.print(f"  → Imported {len(heard_nodes)} heard node(s)")
                     except Exception as e:
@@ -175,7 +175,7 @@ def list(db: str, show_all: bool, managed_only: bool, heard_only: bool):
     async def _list():
         async with AsyncDatabase(db) as database:
             await database.initialize()
-            
+
             # Get nodes based on filter
             if heard_only:
                 nodes = await database.get_heard_nodes()
@@ -206,25 +206,25 @@ def list(db: str, show_all: bool, managed_only: bool, heard_only: bool):
         table.add_column("Node ID", style="magenta")
         table.add_column("Hardware", style="green")
         table.add_column("Firmware", style="blue")
-        
+
         if heard_only:
             # Different columns for heard nodes
             table.add_column("SNR", style="yellow")
             table.add_column("Hops", style="blue")
         else:
             table.add_column("Serial Port", style="yellow")
-        
+
         table.add_column("Status", style="white")
 
         for node in nodes:
             status = "✓ Active" if node.is_active else "✗ Inactive"
             status_style = "green" if node.is_active else "red"
-            
+
             if heard_only:
                 # Show SNR and hops for heard nodes
                 snr_str = f"{node.snr:.1f}" if node.snr is not None else "?"
                 hops_str = str(node.hops_away) if node.hops_away is not None else "?"
-                
+
                 table.add_row(
                     node.short_name,
                     node.id,
@@ -449,50 +449,80 @@ def sync(db: str, port: str | None):
     async def _sync():
         async with AsyncDatabase(db) as database:
             await database.initialize()
-            
+
             # Get managed nodes
             all_nodes = await database.get_all_nodes(active_only=True)
             managed_nodes = [n for n in all_nodes if n.managed and n.serial_port]
-            
+
             if not managed_nodes:
                 console.print("[yellow]No managed nodes with serial ports found.[/yellow]")
                 console.print("Run [bold]nodepool discover[/bold] first.")
                 return
-            
+
             # Filter by port if specified
             if port:
                 managed_nodes = [n for n in managed_nodes if n.serial_port == port]
                 if not managed_nodes:
                     console.print(f"[red]No managed node found on port {port}[/red]")
                     return
-            
+
             console.print(f"[bold blue]Syncing heard nodes from {len(managed_nodes)} managed node(s)...[/bold blue]\n")
-            
+
             manager = NodeManager()
             total_heard = 0
-            
+            total_new = 0
+            total_updated = 0
+
             for node in managed_nodes:
                 console.print(f"Syncing from {node.short_name} ({node.serial_port})...")
                 try:
                     heard_nodes, heard_history = await manager.import_heard_nodes(
                         node.serial_port, node.id
                     )
-                    
-                    # Save heard nodes and history
+
+                    # Track new vs updated nodes
+                    new_nodes = []
+                    updated_nodes = []
+
+                    # Check which nodes are new
                     for heard_node in heard_nodes:
+                        existing = await database.get_node(heard_node.id)
+                        if existing is None:
+                            new_nodes.append(heard_node)
+                        else:
+                            updated_nodes.append(heard_node)
+
+                        # Save the node (insert or update)
                         await database.save_node(heard_node)
-                    
+
+                    # Save heard history
                     for history in heard_history:
                         await database.save_heard_history(history)
-                    
+
                     total_heard += len(heard_nodes)
+                    total_new += len(new_nodes)
+                    total_updated += len(updated_nodes)
+
+                    # Display results for this managed node
                     console.print(f"  [green]✓[/green] Imported {len(heard_nodes)} heard node(s)")
-                    
+                    if new_nodes:
+                        new_names = ", ".join(n.short_name for n in new_nodes[:5])
+                        if len(new_nodes) > 5:
+                            new_names += f", ... (+{len(new_nodes) - 5} more)"
+                        console.print(f"    - {len(new_nodes)} new: {new_names}")
+                    if updated_nodes:
+                        console.print(f"    - {len(updated_nodes)} updated")
+
                 except Exception as e:
                     console.print(f"  [red]✗[/red] Error: {e}")
-            
+
+            # Summary
             console.print(f"\n[green]Successfully synced {total_heard} total heard node(s)[/green]")
-    
+            if total_new > 0:
+                console.print(f"  [cyan]→ {total_new} new node(s)[/cyan]")
+            if total_updated > 0:
+                console.print(f"  [dim]→ {total_updated} updated node(s)[/dim]")
+
     run_async(_sync())
 
 
@@ -513,12 +543,12 @@ def heard(db: str, seen_by: str | None):
         async with AsyncDatabase(db) as database:
             await database.initialize()
             nodes = await database.get_heard_nodes(seen_by=seen_by)
-        
+
         if not nodes:
             console.print("[yellow]No heard nodes found.[/yellow]")
             console.print("Run [bold]nodepool sync[/bold] to import heard nodes.")
             return
-        
+
         table = Table(title="Heard Nodes (from Mesh)")
         table.add_column("Short Name", style="cyan", no_wrap=True)
         table.add_column("Node ID", style="magenta")
@@ -526,11 +556,11 @@ def heard(db: str, seen_by: str | None):
         table.add_column("SNR", style="yellow")
         table.add_column("Hops", style="blue")
         table.add_column("Last Seen", style="white")
-        
+
         for node in nodes:
             snr_str = f"{node.snr:.1f}" if node.snr is not None else "?"
             hops_str = str(node.hops_away) if node.hops_away is not None else "?"
-            
+
             table.add_row(
                 node.short_name,
                 node.id,
@@ -539,10 +569,10 @@ def heard(db: str, seen_by: str | None):
                 hops_str,
                 node.last_seen.strftime("%Y-%m-%d %H:%M"),
             )
-        
+
         console.print(table)
         console.print(f"\nTotal: {len(nodes)} heard node(s)")
-    
+
     run_async(_heard())
 
 

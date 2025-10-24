@@ -19,6 +19,7 @@ class Node(BaseModel):
     serial_port: str | None = Field(None, description="Serial port path")
     hw_model: str | None = Field(None, description="Hardware model")
     firmware_version: str | None = Field(None, description="Firmware version")
+    first_seen: datetime = Field(default_factory=datetime.now, description="First seen timestamp")
     last_seen: datetime = Field(default_factory=datetime.now, description="Last seen timestamp")
     is_active: bool = Field(True, description="Whether the node is active")
     managed: bool = Field(True, description="Whether this node is directly managed (vs heard on mesh)")

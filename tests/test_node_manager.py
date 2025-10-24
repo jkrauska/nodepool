@@ -11,14 +11,27 @@ from nodepool.node_manager import NodeManager
 def mock_serial_interface():
     """Create a mock Meshtastic serial interface."""
     mock = MagicMock()
-    mock.myInfo = {
-        "user": {
-            "id": "!abc123",
-            "shortName": "TEST",
-            "longName": "Test Node",
-            "hwModel": "HELTEC_V3",
+
+    # Mock myInfo with proper attributes
+    mock.myInfo = MagicMock()
+    mock.myInfo.my_node_num = 0xabc123
+    mock.myInfo.pio_env = "2.3.0"
+
+    # Mock nodes dictionary with the node data
+    mock.nodes = {
+        "!00abc123": {
+            "user": {
+                "id": "!00abc123",
+                "shortName": "TEST",
+                "longName": "Test Node",
+                "hwModel": "HELTEC_V3",
+            }
         }
     }
+
+    # Mock metadata
+    mock.metadata = MagicMock()
+    mock.metadata.firmware_version = "2.3.0"
 
     # Mock localNode
     mock.localNode = MagicMock()
@@ -63,7 +76,7 @@ async def test_scan_port_success(mock_interface_class, mock_serial_interface):
     manager = NodeManager()
     node = await manager._scan_port("/dev/ttyUSB0")
 
-    assert node.id == "!abc123"
+    assert node.id == "!00abc123"
     assert node.short_name == "TEST"
     assert node.long_name == "Test Node"
     assert node.serial_port == "/dev/ttyUSB0"
@@ -130,7 +143,7 @@ async def test_discover_nodes_mixed_results(mock_interface_class, mock_serial_in
 
     # Should have one successful node
     assert len(nodes) == 1
-    assert nodes[0].id == "!abc123"
+    assert nodes[0].id == "!00abc123"
 
 
 @pytest.mark.asyncio
