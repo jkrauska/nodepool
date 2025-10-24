@@ -923,37 +923,38 @@ class NodeManager:
         Returns:
             Config dictionary suitable for Node.config field
         """
+        from google.protobuf.json_format import MessageToDict
+        
         config: dict[str, Any] = {}
         current_time = datetime.now().isoformat()
         
         # Process LocalConfig sections
         for section_name, section_data in responses.get("config", {}).items():
-            config[section_name] = {
-                "_status": "loaded",
-                "_retrieved_at": current_time,
-            }
-            # Iterate through protobuf fields
-            for field in section_data.DESCRIPTOR.fields:
-                field_value = getattr(section_data, field.name, None)
-                if field_value is not None:
-                    # Convert to appropriate Python type
-                    if isinstance(field_value, bytes):
-                        field_value = field_value.hex()
-                    config[section_name][field.name] = field_value
+            # Convert protobuf message to dict (handles nested objects)
+            section_dict = MessageToDict(
+                section_data,
+                preserving_proto_field_name=True
+            )
+            
+            # Add metadata
+            section_dict["_status"] = "loaded"
+            section_dict["_retrieved_at"] = current_time
+            
+            config[section_name] = section_dict
         
         # Process ModuleConfig sections
         for section_name, section_data in responses.get("module_config", {}).items():
-            config[section_name] = {
-                "_status": "loaded",
-                "_retrieved_at": current_time,
-            }
-            for field in section_data.DESCRIPTOR.fields:
-                field_value = getattr(section_data, field.name, None)
-                if field_value is not None:
-                    # Convert to appropriate Python type
-                    if isinstance(field_value, bytes):
-                        field_value = field_value.hex()
-                    config[section_name][field.name] = field_value
+            # Convert protobuf message to dict (handles nested objects)
+            section_dict = MessageToDict(
+                section_data,
+                preserving_proto_field_name=True
+            )
+            
+            # Add metadata
+            section_dict["_status"] = "loaded"
+            section_dict["_retrieved_at"] = current_time
+            
+            config[section_name] = section_dict
         
         return config
 
@@ -1699,29 +1700,35 @@ class NodeManager:
                                 
                                 # Send the admin message directly
                                 remote_node._sendAdmin(p, wantResponse=True, onResponse=remote_node.onResponseRequestSettings)
-                                interface.waitForAckNak()
+                                
+                                # Use waitForConfig() which actually waits for and stores the config!
+                                if remote_node.waitForConfig():
+                                    elapsed = time.time() - start_time
+                                    
+                                    # Read the config from the remote node object
+                                    if config_type == "LocalConfig":
+                                        if hasattr(remote_node.localConfig, section_name):
+                                            section_data = getattr(remote_node.localConfig, section_name)
+                                            responses["config"][section_name] = section_data
+                                            logger.info(f"✓ Captured {section_name} from remote.localConfig")
+                                            print(f"\r[{idx}/{total_sections}] Received {section_name} config ✓ ({elapsed:.1f}s)")
+                                            section_success = True
+                                            successful_sections += 1
+                                            break
+                                    else:  # ModuleConfig
+                                        if hasattr(remote_node.moduleConfig, section_name):
+                                            section_data = getattr(remote_node.moduleConfig, section_name)
+                                            responses["module_config"][section_name] = section_data
+                                            logger.info(f"✓ Captured {section_name} from remote.moduleConfig")
+                                            print(f"\r[{idx}/{total_sections}] Received {section_name} config ✓ ({elapsed:.1f}s)")
+                                            section_success = True
+                                            successful_sections += 1
+                                            break
                                 
                                 elapsed = time.time() - start_time
-                                
-                                # Debug: Check what's in responses dict
-                                logger.info(f"After {section_name} request - responses['config'] keys: {list(responses.get('config', {}).keys())}")
-                                logger.info(f"After {section_name} request - responses['module_config'] keys: {list(responses.get('module_config', {}).keys())}")
-                                
-                                # Check if we captured the response
-                                captured = (section_name in responses.get("config", {}) or 
-                                          section_name in responses.get("module_config", {}))
-                                
-                                if captured:
-                                    print(f"\r[{idx}/{total_sections}] Received {section_name} config ✓ ({elapsed:.1f}s)")
-                                    section_success = True
-                                    successful_sections += 1
-                                    break
-                                else:
-                                    # Request completed but no data captured
-                                    print(f"\r[{idx}/{total_sections}] {section_name} config - no data ({elapsed:.1f}s)")
-                                    logger.warning(f"Response dict after {section_name}: {responses}")
-                                    if attempt < 3:
-                                        continue
+                                print(f"\r[{idx}/{total_sections}] {section_name} config - no data ({elapsed:.1f}s)")
+                                if attempt < 3:
+                                    continue
                                     
                             except Exception as e:
                                 elapsed = time.time() - start_time
