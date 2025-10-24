@@ -1472,6 +1472,30 @@ class NodeManager:
             if not public_key_bytes:
                 logger.warning("No public key found - attempting without PKI authentication")
             
+            # Store metadata response in closure
+            metadata_response = {"firmware_version": None, "hw_model": None}
+            
+            def capture_metadata_response(packet):
+                """Capture metadata from response packet."""
+                try:
+                    if "decoded" in packet:
+                        decoded = packet["decoded"]
+                        if decoded.get("portnum") == portnums_pb2.PortNum.Name(portnums_pb2.PortNum.ADMIN_APP):
+                            admin_data = decoded.get("admin", {}).get("raw", None)
+                            if admin_data and hasattr(admin_data, "get_device_metadata_response"):
+                                response = admin_data.get_device_metadata_response
+                                metadata_response["firmware_version"] = getattr(response, "firmware_version", None)
+                                hw_model_enum = getattr(response, "hw_model", None)
+                                if hw_model_enum:
+                                    try:
+                                        from meshtastic import hardware
+                                        metadata_response["hw_model"] = hardware.Models(hw_model_enum).name
+                                    except (ImportError, ValueError, AttributeError):
+                                        pass
+                                logger.info(f"Captured firmware: {metadata_response['firmware_version']}")
+                except Exception as e:
+                    logger.error(f"Error capturing metadata: {e}")
+            
             # Request device metadata using the library's official method
             logger.info(f"Requesting device metadata from {target_node_id}")
             print(f"Requesting device metadata from {target_node_id}...")
@@ -1481,23 +1505,32 @@ class NodeManager:
                     # Get the remote node object (this is how the official CLI does it)
                     remote_node = interface.getNode(target_node_id, requestChannelAttempts=0)
                     
+                    # Temporarily replace the callback to capture response
+                    original_callback = remote_node.onRequestGetMetadata
+                    
+                    def wrapped_callback(packet):
+                        # Capture the response
+                        capture_metadata_response(packet)
+                        # Call original to handle ACK/NAK
+                        return original_callback(packet)
+                    
+                    remote_node.onRequestGetMetadata = wrapped_callback
+                    
                     # Call getMetadata() on the node object (like official CLI)
                     print(f"  Attempt {attempt + 1}/{retries + 1}: Calling getMetadata()...")
                     remote_node.getMetadata()
                     
                     print(f"  ✓ Metadata request completed")
                     
-                    # Check if the interface's metadata was updated
-                    firmware_version = None
-                    hw_model = user.get("hwModel")
+                    # Get firmware from captured response
+                    firmware_version = metadata_response["firmware_version"]
+                    hw_model = metadata_response["hw_model"] or user.get("hwModel")
                     
-                    # Try to get firmware from interface.metadata
-                    if hasattr(interface, "metadata") and hasattr(interface.metadata, "firmware_version"):
-                        firmware_version = interface.metadata.firmware_version
+                    if firmware_version:
                         print(f"  ✓ Firmware version: {firmware_version}")
                         logger.info(f"Retrieved firmware version: {firmware_version}")
                     else:
-                        print(f"  ⚠ Firmware version not available in metadata")
+                        print(f"  ⚠ Firmware version not captured from response")
                     
                     # Check if target node data was updated
                     current_target_data = interface.nodes.get(target_node_id, {})
