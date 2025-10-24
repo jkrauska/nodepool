@@ -104,12 +104,50 @@ nodepool check
 3. Phase 3: REST API with FastAPI
 4. Phase 4: Web dashboard
 
+## Git Workflow
+- **Main branch**: `main` - production-ready code
+- **Commit frequently**: Make logical, atomic commits
+- **Commit message format**: 
+  - First line: Brief summary (50 chars max)
+  - Blank line
+  - Bullet points explaining changes
+  - Include what changed and why
+- **Push regularly**: Keep remote in sync after completing features
+- **Commit checkpoints**: Commit at natural breakpoints (e.g., after database layer, after CLI updates)
+
+### Example Commit Messages
+```
+Add managed vs heard nodes functionality
+
+- Distinguish between managed nodes (direct USB) and heard nodes (mesh)
+- Added 'managed' flag, 'snr', and 'hops_away' fields to nodes
+- Created heard_history table to track when/where nodes were heard
+- Updated discover command to automatically import heard nodes
+```
+
+### When to Commit
+1. After completing a feature or logical unit of work
+2. Before switching to a different feature
+3. After fixing tests or linting issues
+4. When database schema changes are complete
+5. After CLI commands are implemented and tested
+
+### Git Commands Used
+```bash
+git add -A                   # Stage all changes
+git status                   # Check what's staged
+git commit -m "message"      # Commit with message
+git push                     # Push to remote
+git log --oneline            # View commit history
+```
+
 ## Important Notes
 - Serial operations are blocking - always run in executor
 - Use asyncio for concurrent node scanning
 - Database uses upsert pattern (INSERT ... ON CONFLICT)
 - Mock serial interfaces thoroughly in tests
 - Keep reachability checks lightweight
+- Commit code at logical breakpoints for easy rollback
 
 ## When Adding New Features
 1. Create models in models.py if needed
@@ -117,4 +155,6 @@ nodepool check
 3. Implement business logic in appropriate manager
 4. Write tests first or alongside implementation
 5. Add CLI command in cli.py
-6. Update this file with new patterns/commands
+6. **Commit changes** with descriptive message
+7. Push to remote repository
+8. Update this file with new patterns/commands
