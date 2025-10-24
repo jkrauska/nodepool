@@ -1659,142 +1659,29 @@ class NodeManager:
                     
                     print(f"  ✓ Metadata request completed")
                     
-                    # Now request all config sections
-                    from meshtastic.protobuf import config_pb2, module_config_pb2
+                    # Note: Full config retrieval over mesh is not currently reliable
+                    # The library caches config after first retrieval, making subsequent
+                    # requests appear successful (0.1s) but actually returning cached data
+                    # rather than fresh network responses.
+                    # 
+                    # For now, we only retrieve firmware version (metadata) which works reliably.
+                    # Full config retrieval would require significant library modifications.
                     
-                    # Wrap config callback
-                    original_settings_callback = remote_node.onResponseRequestSettings
-                    
-                    def wrapped_settings_callback(packet):
-                        capture_config_response(packet)
-                        return original_settings_callback(packet)
-                    
-                    remote_node.onResponseRequestSettings = wrapped_settings_callback
-                    
-                    # Prepare all config sections to request
-                    config_sections = [
-                        ("device", config_pb2.Config.DESCRIPTOR.fields_by_name["device"]),
-                        ("position", config_pb2.Config.DESCRIPTOR.fields_by_name["position"]),
-                        ("power", config_pb2.Config.DESCRIPTOR.fields_by_name["power"]),
-                        ("network", config_pb2.Config.DESCRIPTOR.fields_by_name["network"]),
-                        ("display", config_pb2.Config.DESCRIPTOR.fields_by_name["display"]),
-                        ("lora", config_pb2.Config.DESCRIPTOR.fields_by_name["lora"]),
-                        ("bluetooth", config_pb2.Config.DESCRIPTOR.fields_by_name["bluetooth"]),
-                    ]
-                    
-                    module_sections = [
-                        ("mqtt", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["mqtt"]),
-                        ("serial", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["serial"]),
-                        ("telemetry", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["telemetry"]),
-                    ]
-                    
-                    # Track sections with their type (LocalConfig vs ModuleConfig)
-                    all_sections = []
-                    for name, field in config_sections:
-                        all_sections.append((name, field, "LocalConfig"))
-                    for name, field in module_sections:
-                        all_sections.append((name, field, "ModuleConfig"))
-                    
-                    total_sections = len(all_sections)
-                    successful_sections = 0
-                    failed_sections = []
-                    
-                    print(f"\n  Retrieving {total_sections} config sections...")
-                    
-                    # Request each section with retry logic
-                    for idx, (section_name, section_field, config_type) in enumerate(all_sections, 1):
-                        section_success = False
-                        
-                        for attempt in range(1, 4):  # Attempts 1, 2, 3
-                            try:
-                                # Show request with attempt number
-                                type_label = "LocalConfig" if config_type == "LocalConfig" else "ModuleConfig"
-                                print(f"[{idx}/{total_sections}] Requesting {section_name} ({type_label})... (attempt {attempt})", end="", flush=True)
-                                
-                                # Time the request
-                                start_time = time.time()
-                                
-                                # Create admin message with correct request type
-                                from meshtastic import admin_pb2
-                                p = admin_pb2.AdminMessage()
-                                
-                                # Use correct request type based on config_type
-                                if config_type == "LocalConfig":
-                                    p.get_config_request = section_field.index
-                                    logger.info(f"Sending get_config_request for {section_name} (index {section_field.index})")
-                                else:
-                                    p.get_module_config_request = section_field.index
-                                    logger.info(f"Sending get_module_config_request for {section_name} (index {section_field.index})")
-                                
-                                # Send the admin message directly
-                                remote_node._sendAdmin(p, wantResponse=True, onResponse=remote_node.onResponseRequestSettings)
-                                
-                                # Use waitForConfig() which actually waits for and stores the config!
-                                if remote_node.waitForConfig():
-                                    elapsed = time.time() - start_time
-                                    
-                                    # Read the config from the remote node object
-                                    if config_type == "LocalConfig":
-                                        if hasattr(remote_node.localConfig, section_name):
-                                            section_data = getattr(remote_node.localConfig, section_name)
-                                            responses["config"][section_name] = section_data
-                                            logger.info(f"✓ Captured {section_name} from remote.localConfig")
-                                            print(f"\r[{idx}/{total_sections}] Received {section_name} config ✓ ({elapsed:.1f}s)")
-                                            section_success = True
-                                            successful_sections += 1
-                                            break
-                                    else:  # ModuleConfig
-                                        if hasattr(remote_node.moduleConfig, section_name):
-                                            section_data = getattr(remote_node.moduleConfig, section_name)
-                                            responses["module_config"][section_name] = section_data
-                                            logger.info(f"✓ Captured {section_name} from remote.moduleConfig")
-                                            print(f"\r[{idx}/{total_sections}] Received {section_name} config ✓ ({elapsed:.1f}s)")
-                                            section_success = True
-                                            successful_sections += 1
-                                            break
-                                
-                                elapsed = time.time() - start_time
-                                print(f"\r[{idx}/{total_sections}] {section_name} config - no data ({elapsed:.1f}s)")
-                                if attempt < 3:
-                                    continue
-                                    
-                            except Exception as e:
-                                elapsed = time.time() - start_time
-                                error_msg = str(e)
-                                if "Timed out" in error_msg or "timeout" in error_msg.lower():
-                                    print(f"\r[{idx}/{total_sections}] {section_name} config - timeout ({elapsed:.1f}s)")
-                                else:
-                                    print(f"\r[{idx}/{total_sections}] {section_name} config - error ({elapsed:.1f}s)")
-                                
-                                if attempt < 3:
-                                    print(f"[{idx}/{total_sections}] Retrying {section_name} config (attempt {attempt + 1})")
-                                    time.sleep(1)  # Brief delay before retry
-                        
-                        if not section_success:
-                            failed_sections.append(section_name)
-                            
-                            # Early exit: If first section fails, abort remaining
-                            if idx == 1:
-                                print(f"\n  First config section failed after {attempt} attempts - aborting remaining sections")
-                                break
-                    
-                    # Summary
-                    print(f"\n  Retrieved {successful_sections}/{total_sections} config sections")
-                    if failed_sections:
-                        print(f"  Failed: {', '.join(failed_sections)}")
+                    print(f"\n  Note: Full config retrieval over mesh not yet implemented")
+                    print(f"  (Library limitations prevent reliable multi-section retrieval)")
                     
                     # Get firmware from captured response
                     firmware_version = responses["firmware_version"]
                     hw_model = responses["hw_model"] or user.get("hwModel")
                     
-                    # Build full config from captured responses
+                    # Build config from captured responses (currently just metadata)
                     full_config = self._build_config_from_responses(responses)
                     
                     if firmware_version:
-                        print(f"  ✓ Firmware version: {firmware_version}")
+                        print(f"\n  ✓ Firmware version: {firmware_version}")
                         logger.info(f"Retrieved firmware version: {firmware_version}")
                     else:
-                        print(f"  ⚠ Firmware version not captured from response")
+                        print(f"\n  ⚠ Firmware version not captured from response")
                     
                     # Check if target node data was updated
                     current_target_data = interface.nodes.get(target_node_id, {})

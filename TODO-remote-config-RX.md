@@ -1,244 +1,153 @@
-# TODO: Complete Remote Config Retrieval
+# Remote Config Retrieval Status
 
-## Status: Partially Implemented
+## Current Status: FIRMWARE ONLY ✅
 
 Remote firmware version retrieval is **working perfectly** ✅  
-Full config retrieval is **partially implemented** and needs completion.
+Full config retrieval is **blocked by library limitations** ⚠️
 
----
+### What Works
+- ✅ Firmware version retrieval via `getMetadata()`
+- ✅ Hardware model detection
+- ✅ Basic node information (SNR, hops, last heard)
 
-## What Works Now
+### What Doesn't Work
+- ⚠️ Full config section retrieval over mesh
+- ⚠️ Multi-section config requests return cached data (0.1s response times)
 
-✅ **Firmware Version Retrieval**
-- Uses `interface.getNode(target_id).getMetadata()`
-- Wraps callback to capture firmware from response packet
-- Correctly returns remote node's firmware (e.g., 2.7.11.ee68575)
-- Tested and working!
+## Root Cause: Library Config Caching
 
-✅ **Basic Infrastructure**
-- Callback wrapping mechanism works
-- `capture_metadata_response()` proven functional
-- `capture_config_response()` stub created
+The Meshtastic Python library caches the entire config tree after the first successful `getMetadata()` or config section retrieval. This causes:
 
----
+1. **First request** (e.g., `device` config): Real network request → 14.9s
+2. **Subsequent requests**: Library returns cached data → 0.1s (no network traffic)
 
-## What Needs to Be Done
-
-### 1. Fix Compilation Errors
-
-**File:** `src/nodepool/node_manager.py`
-
-**Error:** Reference to undefined `metadata_response` variable
-- Line references `metadata_response["firmware_version"]` 
-- Should be `responses["firmware_version"]`
-- Variable was renamed from `metadata_response` to `responses` dict
-
-**Fix:**
-```python
-# OLD (wrong):
-firmware_version = metadata_response["firmware_version"]
-
-# NEW (correct):
-firmware_version = responses["firmware_version"]
+### Evidence
+```
+[1/10] Received device config ✓ (14.9s)  ← Real network response
+[2/10] Received position config ✓ (0.1s)  ← Cached!
+[3/10] Received power config ✓ (0.1s)     ← Cached!
+[4/10] Received network config ✓ (0.1s)   ← Cached!
+...
 ```
 
-### 2. Implement `_build_config_from_responses()` Method
+### Why This Happens
 
-**Purpose:** Convert captured protobuf responses into config dict
+After the first config retrieval, the library populates:
+- `remote_node.localConfig` (all sections)
+- `remote_node.moduleConfig` (all sections)
 
-**Location:** Add to `NodeManager` class in `src/nodepool/node_manager.py`
+When `waitForConfig()` is called again, it sees these objects exist and returns `True` immediately without waiting for new network data.
 
-**Signature:**
+## Potential Solutions
+
+### Option 1: Bypass Library Config System
+Manually construct admin requests and parse responses without using `remote_node.localConfig/moduleConfig`:
+
 ```python
-def _build_config_from_responses(self, responses: dict) -> dict[str, Any]:
-    """Build config dict from captured protobuf responses.
-    
-    Args:
-        responses: Dict with 'config' and 'module_config' keys containing protobufs
-        
-    Returns:
-        Config dictionary suitable for Node.config field
-    """
+# Send admin request
+p = admin_pb2.AdminMessage()
+p.get_config_request = section_field.index
+remote_node._sendAdmin(p, wantResponse=True)
+
+# Wait for actual admin response packet (not waitForConfig)
+# Parse response protobuf directly
+# Don't read from remote_node.localConfig
 ```
 
-**Implementation:**
+**Pros:** Would get real network responses  
+**Cons:** Bypasses library's built-in parsing, increases complexity
+
+### Option 2: Clear Cache Between Requests
+Try to clear or reset `remote_node.localConfig` between requests:
+
 ```python
-def _build_config_from_responses(self, responses: dict) -> dict[str, Any]:
-    """Build config dict from captured responses."""
-    config = {}
-    
-    # Process LocalConfig sections
-    for section_name, section_data in responses.get("config", {}).items():
-        config[section_name] = {}
-        # Iterate through protobuf fields
-        for field in section_data.DESCRIPTOR.fields:
-            field_value = getattr(section_data, field.name, None)
-            if field_value is not None:
-                config[section_name][field.name] = field_value
-    
-    # Process ModuleConfig sections
-    for section_name, section_data in responses.get("module_config", {}).items():
-        config[section_name] = {}
-        for field in section_data.DESCRIPTOR.fields:
-            field_value = getattr(section_data, field.name, None)
-            if field_value is not None:
-                config[section_name][field.name] = field_value
-    
-    return config
+# Before each request
+remote_node.localConfig = None  # or reset to empty
+# Then request
+remote_node.requestConfig(section_field)
 ```
 
-### 3. Fix Config Section Requests
+**Pros:** Simple if it works  
+**Cons:** May not be supported, could break library internals
 
-**Current Implementation Issues:**
+### Option 3: Use Stream Interceptor
+Already have `MessageResponseHandler` that intercepts packets at stream level:
 
-1. **Incomplete section list** - Only requests 7 LocalConfig and 3 ModuleConfig sections
-2. **No error recovery** - If one section fails, should continue with others
-3. **Slow sequential requests** - Takes ~30-60 seconds for full config
-
-**LocalConfig Sections to Request:**
 ```python
-config_sections = [
-    ("device", config_pb2.Config.DESCRIPTOR.fields_by_name["device"]),
-    ("position", config_pb2.Config.DESCRIPTOR.fields_by_name["position"]),
-    ("power", config_pb2.Config.DESCRIPTOR.fields_by_name["power"]),
-    ("network", config_pb2.Config.DESCRIPTOR.fields_by_name["network"]),
-    ("display", config_pb2.Config.DESCRIPTOR.fields_by_name["display"]),
-    ("lora", config_pb2.Config.DESCRIPTOR.fields_by_name["lora"]),
-    ("bluetooth", config_pb2.Config.DESCRIPTOR.fields_by_name["bluetooth"]),
-    # These are commented out in current implementation:
-    # ("security", ...),  # May not be retrievable remotely
-    # ("sessionkey", ...),  # May not be retrievable remotely
-]
+# Register packet ID to track
+handler.register_packet(packet_id)
+
+# Send config request
+remote_node.requestConfig(section_field)
+
+# Wait for admin response packet directly
+admin_response = handler.wait_for_admin_response(packet_id, timeout=20)
+
+# Parse the admin message for config data
+if admin_response:
+    admin_msg = admin_response["admin_message"]
+    # Extract config from admin_msg.get_config_response
 ```
 
-**ModuleConfig Sections to Request:**
+**Pros:** Bypasses library caching, gets real network responses  
+**Cons:** Requires manual protobuf parsing
+
+### Option 4: Request All Sections at Once
+Some firmwares support requesting all config at once:
+
 ```python
-module_sections = [
-    ("mqtt", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["mqtt"]),
-    ("serial", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["serial"]),
-    ("telemetry", module_config_pb2.ModuleConfig.DESCRIPTOR.fields_by_name["telemetry"]),
-    # Add these if needed:
-    # ("external_notification", ...),
-    # ("store_forward", ...),
-    # ("range_test", ...),
-    # ("canned_message", ...),
-    # ("audio", ...),
-    # ("remote_hardware", ...),
-    # ("neighbor_info", ...),
-    # ("ambient_lighting", ...),
-    # ("detection_sensor", ...),
-    # ("paxcounter", ...),
-]
+# Single request for all configs
+remote_node.requestChannels()  # If supported
 ```
 
-### 4. Update Node Creation
+**Pros:** Single network roundtrip  
+**Cons:** May not be supported by all firmware versions
 
-**Current:** Node is created with empty config
+## Recommended Solution: Option 3
+
+Use the existing `MessageResponseHandler` stream interceptor to capture admin responses directly:
+
 ```python
-node = Node(
-    # ...
-    config={},  # ← Empty!
-)
-```
+# Install interceptor
+handler = MessageResponseHandler(interface)
 
-**Needed:** Use built config
-```python
-full_config = self._build_config_from_responses(responses)
-
-node = Node(
-    id=target_node_id,
-    short_name=user.get("shortName", "?"),
-    long_name=user.get("longName", "Unknown"),
-    hw_model=hw_model,
-    firmware_version=firmware_version,
-    last_seen=datetime.fromtimestamp(current_target_data.get("lastHeard", time.time())),
-    is_active=True,
-    snr=current_target_data.get("snr"),
-    hops_away=current_target_data.get("hopsAway"),
-    config=full_config,  # ← Use captured config!
-)
-```
-
-### 5. Add CLI Flag for Full Config
-
-**Current:** `nodepool remote config` only gets firmware
-
-**Proposed:** Add `--full` flag
-```bash
-# Just metadata (current, fast ~5s)
-nodepool remote config 29f35f73 --via 3c7f9d4e
-
-# Full config (slow ~30-60s)
-nodepool remote config 29f35f73 --via 3c7f9d4e --full
-```
-
-**Implementation in `cli.py`:**
-```python
-@click.option(
-    "--full",
-    is_flag=True,
-    help="Request full configuration (slower, ~30-60s)"
-)
-def remote_config(via, dest, timeout, full):
-    # ...
-    if full:
-        # Request all config sections
-    else:
-        # Just metadata (current behavior)
-```
-
-### 6. Improve Error Handling
-
-**Issues to Handle:**
-- Timeouts on individual config sections
-- Target node doesn't support certain modules
-- PKI auth failures
-- Network errors mid-retrieval
-
-**Pattern:**
-```python
 for section_name, section_field in config_sections:
-    try:
-        print(f"    - {section_name}", end="", flush=True)
-        remote_node.requestConfig(section_field)
-        interface.waitForAckNak()
-        print(" ✓")
-    except TimeoutError:
-        print(" ⏱ timeout")
-        logger.warning(f"Timeout getting {section_name}")
-    except Exception as e:
-        print(f" ✗ {e}")
-        logger.error(f"Failed to get {section_name}: {e}")
-        # Continue with next section
+    # Send request
+    p = admin_pb2.AdminMessage()
+    p.get_config_request = section_field.index
+    packet_id = remote_node._sendAdmin(p, wantResponse=True)
+    
+    # Register for tracking
+    handler.register_packet(packet_id)
+    
+    # Wait for real admin response (not waitForConfig!)
+    admin_response = handler.wait_for_admin_response(packet_id, timeout=20)
+    
+    if admin_response:
+        # Parse config from admin_response["admin_message"]
+        admin_msg = admin_response["admin_message"]
+        if hasattr(admin_msg, "get_config_response"):
+            config_data = admin_msg.get_config_response
+            # Store in responses dict
+            responses["config"][section_name] = config_data
 ```
 
-### 7. Add Progress Reporting
+This would:
+- ✅ Get real network responses (15-20s each)
+- ✅ Not rely on library caching
+- ✅ Use existing stream interceptor infrastructure
+- ✅ Parse protobufs directly
 
-**Current:** Limited progress output
+## Current Workaround
 
-**Proposed:** Show percentage and time remaining
+For now, `nodepool remote config` only retrieves firmware version, which works reliably. The code documents this limitation with:
+
+```python
+# Note: Full config retrieval over mesh is not currently reliable
+# The library caches config after first retrieval, making subsequent
+# requests appear successful (0.1s) but actually returning cached data
+# rather than fresh network responses.
 ```
-Requesting local config sections...
-  - device ✓ (1/7)
-  - position ✓ (2/7)
-  - power ⏱ timeout (3/7)
-  - network ✓ (4/7)
-  ...
-  
-Retrieved 6/7 local config sections
-Retrieved 2/3 module config sections
-Total time: 42s
-```
-
-### 8. Test Coverage
-
-**Need to test:**
-1. Each config section individually
-2. Timeout handling
-3. Partial config retrieval (some sections fail)
-4. Different target node types (router, client, tracker)
-5. Nodes at different hop distances (1-hop, 3-hop, max-hop)
-6. Error recovery and retry logic
 
 ---
 
